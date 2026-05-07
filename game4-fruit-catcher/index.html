@@ -1,0 +1,483 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+  <title>水果接接乐</title>
+  <style>
+    * { margin: 0; padding: 0; box-sizing: border-box; }
+    body { background: #87CEEB; overflow: hidden; touch-action: none; font-family: 'PingFang SC', sans-serif; }
+    canvas { display: block; }
+    
+    #ui { position: fixed; top: 0; left: 0; right: 0; padding: 15px 20px; display: flex; justify-content: space-between; color: white; font-size: 20px; font-weight: bold; text-shadow: 0 2px 4px rgba(0,0,0,0.5); z-index: 10; pointer-events: none; }
+    
+    .screen {
+      position: fixed; top: 0; left: 0; right: 0; bottom: 0;
+      background: rgba(0,0,0,0.75); display: flex; flex-direction: column;
+      align-items: center; justify-content: center; z-index: 100; color: white;
+    }
+    .screen-title { font-size: 48px; font-weight: bold; margin-bottom: 10px; }
+    .screen-sub { font-size: 18px; color: #ccc; margin-bottom: 30px; }
+    .screen-score { font-size: 72px; color: #ffd700; font-weight: bold; }
+    .screen-best { font-size: 16px; color: #aaa; margin-top: 8px; }
+    
+    .btn { padding: 14px 48px; font-size: 20px; border: none; border-radius: 50px; cursor: pointer; margin: 8px; font-weight: bold; transition: transform 0.15s; }
+    .btn:active { transform: scale(0.93); }
+    .btn-primary { background: linear-gradient(135deg, #667eea, #764ba2); color: white; }
+    .btn-ad { background: linear-gradient(135deg, #f093fb, #f5576c); color: white; }
+    .btn-ad::before { content: '🎬 '; }
+    
+    #pause-btn { position: fixed; top: 60px; right: 15px; background: rgba(255,255,255,0.2); border: none; color: white; font-size: 18px; padding: 8px 14px; border-radius: 8px; cursor: pointer; z-index: 50; }
+    
+    .combo-display { position: fixed; top: 50%; left: 50%; transform: translate(-50%, -50%); font-size: 48px; font-weight: bold; color: #ffd700; text-shadow: 0 0 20px rgba(255,215,0,0.8); pointer-events: none; z-index: 20; opacity: 0; transition: opacity 0.3s; }
+    
+    .tip { font-size: 13px; color: #888; margin-top: 12px; }
+    
+    .screen { display: none; }
+  </style>
+</head>
+<body>
+
+<canvas id="gameCanvas"></canvas>
+
+<div id="ui">
+  <div>🏆 <span id="score">0</span></div>
+  <div>💰 <span id="coins">0</span></div>
+</div>
+
+<button id="pause-btn">⏸</button>
+<div id="combo" class="combo-display"></div>
+
+<div id="menu-screen" class="screen" style="display:flex;">
+  <div class="screen-title">🍎 水果接接乐</div>
+  <div class="screen-sub">移动篮子接住水果，避免炸弹！</div>
+  <button class="btn btn-primary" id="start-btn">开始游戏</button>
+  <div class="tip">左右滑动或拖动移动篮子</div>
+</div>
+
+<div id="gameover-screen" class="screen">
+  <div class="screen-title">游戏结束</div>
+  <div class="screen-score" id="final-score">0</div>
+  <div class="screen-best" id="best-score">历史最高: 0</div>
+  <button class="btn btn-primary" id="restart-btn">再玩一次</button>
+  <button class="btn btn-ad" id="share-btn">🎬 看广告双倍金币</button>
+</div>
+
+<script>
+// ============================================================
+const canvas = document.getElementById('gameCanvas');
+const ctx = canvas.getContext('2d');
+
+function resize() {
+  canvas.width = window.innerWidth;
+  canvas.height = window.innerHeight;
+}
+resize();
+window.addEventListener('resize', resize);
+
+// ============================================================
+const FRUITS = [
+  { emoji: '🍎', points: 10, color: '#e74c3c' },
+  { emoji: '🍊', points: 10, color: '#f39c12' },
+  { emoji: '🍋', points: 15, color: '#f1c40f' },
+  { emoji: '🍇', points: 15, color: '#9b59b6' },
+  { emoji: '🍉', points: 20, color: '#e91e63' },
+  { emoji: '🍓', points: 20, color: '#e74c3c' },
+  { emoji: '🍑', points: 25, color: '#ffb6c1' },
+  { emoji: '🍍', points: 30, color: '#f1c40f' },
+  { emoji: '🥝', points: 25, color: '#27ae60' },
+  { emoji: '🍑', points: 25, color: '#ff9800' },
+];
+const BOMB = { emoji: '💣', points: -50, color: '#333' };
+const BASKET = { emoji: '🧺', w: 80, h: 50 };
+
+// ============================================================
+let state = 'menu';
+let score = 0;
+let coins = parseInt(localStorage.getItem('fruit_coins') || '0');
+let best = parseInt(localStorage.getItem('fruit_best') || '0');
+let basket = { x: 0, y: 0, w: 80, h: 50 };
+let items = [];
+let particles = [];
+let combo = 0;
+let comboTimer = 0;
+let gameSpeed = 1;
+let paused = false;
+let touchX = null;
+
+// ============================================================
+function startGame() {
+  state = 'playing';
+  score = 0;
+  combo = 0;
+  comboTimer = 0;
+  items = [];
+  particles = [];
+  gameSpeed = 1;
+  paused = false;
+  basket.x = canvas.width / 2 - basket.w / 2;
+  basket.y = canvas.height - 100;
+  
+  document.getElementById('menu-screen').style.display = 'none';
+  document.getElementById('gameover-screen').style.display = 'none';
+  document.getElementById('ui').style.display = 'flex';
+  updateUI();
+}
+
+function endGame() {
+  state = 'gameover';
+  
+  const earned = Math.floor(score / 2);
+  coins += earned;
+  localStorage.setItem('fruit_coins', coins);
+  
+  if (score > best) {
+    best = score;
+    localStorage.setItem('fruit_best', best);
+  }
+  
+  document.getElementById('final-score').textContent = score;
+  document.getElementById('best-score').textContent = '历史最高: ' + best;
+  document.getElementById('gameover-screen').style.display = 'flex';
+  document.getElementById('ui').style.display = 'none';
+}
+
+// ============================================================
+function spawnItem() {
+  const isBomb = Math.random() < 0.1;
+  const fruit = isBomb ? BOMB : FRUITS[Math.floor(Math.random() * FRUITS.length)];
+  
+  items.push({
+    x: 30 + Math.random() * (canvas.width - 60),
+    y: -30,
+    vx: (Math.random() - 0.5) * 2,
+    vy: 2 + Math.random() * 2,
+    size: 30,
+    ...fruit,
+    rotation: 0,
+    rotationSpeed: (Math.random() - 0.5) * 0.2
+  });
+}
+
+// ============================================================
+function spawnParticles(x, y, color, count) {
+  for (let i = 0; i < count; i++) {
+    const angle = Math.random() * Math.PI * 2;
+    const speed = 2 + Math.random() * 4;
+    particles.push({
+      x, y,
+      vx: Math.cos(angle) * speed,
+      vy: Math.sin(angle) * speed - 2,
+      size: 4 + Math.random() * 6,
+      color,
+      life: 1
+    });
+  }
+}
+
+function showCombo(n) {
+  const el = document.getElementById('combo');
+  el.textContent = n + '连！🎉';
+  el.style.opacity = '1';
+  el.style.transform = 'translate(-50%, -50%) scale(1.2)';
+  setTimeout(() => {
+    el.style.opacity = '0';
+    el.style.transform = 'translate(-50%, -50%) scale(0.8)';
+  }, 800);
+}
+
+// ============================================================
+let spawnTimer = 0;
+let lastTime = 0;
+
+function update(dt) {
+  if (state !== 'playing' || paused) return;
+  
+  // 加速
+  gameSpeed = 1 + score / 500;
+  
+  // 生成
+  spawnTimer++;
+  const spawnInterval = Math.max(20, 50 - Math.floor(score / 50));
+  if (spawnTimer >= spawnInterval) {
+    spawnItem();
+    spawnTimer = 0;
+  }
+  
+  // 更新物品
+  items.forEach(item => {
+    item.x += item.vx;
+    item.y += item.vy * gameSpeed;
+    item.rotation += item.rotationSpeed;
+    
+    // 边缘反弹
+    if (item.x < item.size/2 || item.x > canvas.width - item.size/2) {
+      item.vx *= -1;
+    }
+    
+    // 检测碰撞篮子
+    const bx = basket.x + basket.w / 2;
+    const by = basket.y + basket.h / 2;
+    const dx = item.x - bx;
+    const dy = item.y - by;
+    
+    if (Math.abs(dx) < (basket.w/2 + item.size/2) * 0.8 && Math.abs(dy) < (basket.h/2 + item.size/2) * 0.8) {
+      item.caught = true;
+      
+      if (item.emoji === '💣') {
+        // 炸弹
+        spawnParticles(item.x, item.y, '#f00', 20);
+        combo = 0;
+        score = Math.max(0, score + item.points);
+        showCombo(0);
+      } else {
+        // 水果
+        spawnParticles(item.x, item.y, item.color, 8);
+        combo++;
+        const comboBonus = combo > 1 ? (combo - 1) * 5 : 0;
+        score += item.points + comboBonus;
+        
+        if (combo >= 3) {
+          showCombo(combo);
+        }
+        comboTimer = 120;
+      }
+    }
+  });
+  
+  // combo计时
+  if (comboTimer > 0) {
+    comboTimer--;
+    if (comboTimer === 0) combo = 0;
+  }
+  
+  // 移除
+  items = items.filter(item => !item.caught && item.y < canvas.height + 50);
+  
+  // 粒子
+  particles.forEach(p => {
+    p.x += p.vx;
+    p.y += p.vy;
+    p.vy += 0.2;
+    p.life -= 0.03;
+  });
+  particles = particles.filter(p => p.life > 0);
+  
+  // 掉落检测
+  items.forEach(item => {
+    if (!item.caught && item.y > canvas.height) {
+      if (item.emoji !== '💣') {
+        // 漏接
+        combo = 0;
+      }
+      item.caught = true;
+    }
+  });
+  
+  updateUI();
+}
+
+function updateUI() {
+  document.getElementById('score').textContent = score;
+  document.getElementById('coins').textContent = coins;
+}
+
+// ============================================================
+function draw() {
+  // 天空渐变
+  const skyGrad = ctx.createLinearGradient(0, 0, 0, canvas.height);
+  skyGrad.addColorStop(0, '#87CEEB');
+  skyGrad.addColorStop(0.7, '#E0F6FF');
+  skyGrad.addColorStop(1, '#87CEEB');
+  ctx.fillStyle = skyGrad;
+  ctx.fillRect(0, 0, canvas.width, canvas.height);
+  
+  // 云朵
+  ctx.fillStyle = 'rgba(255,255,255,0.8)';
+  const cloudOffset = (Date.now() / 50) % (canvas.width + 200);
+  drawCloud(cloudOffset - 100, 80, 1);
+  drawCloud((cloudOffset + 300) % (canvas.width + 200), 140, 0.7);
+  drawCloud((cloudOffset + 600) % (canvas.width + 200), 60, 0.5);
+  
+  // 地面
+  const groundY = canvas.height - 60;
+  const groundGrad = ctx.createLinearGradient(0, groundY, 0, canvas.height);
+  groundGrad.addColorStop(0, '#27ae60');
+  groundGrad.addColorStop(1, '#1e8449');
+  ctx.fillStyle = groundGrad;
+  ctx.fillRect(0, groundY, canvas.width, 60);
+  
+  // 小草
+  ctx.fillStyle = '#2ecc71';
+  for (let i = 0; i < canvas.width; i += 15) {
+    const h = 8 + Math.sin(i * 0.5 + Date.now() / 500) * 3;
+    ctx.beginPath();
+    ctx.moveTo(i, groundY);
+    ctx.quadraticCurveTo(i + 5, groundY - h, i + 10, groundY);
+    ctx.fill();
+  }
+  
+  // 物品
+  items.forEach(item => {
+    ctx.save();
+    ctx.translate(item.x, item.y);
+    ctx.rotate(item.rotation);
+    ctx.font = `${item.size * 2}px Arial`;
+    ctx.textAlign = 'center';
+    ctx.textBaseline = 'middle';
+    ctx.fillText(item.emoji, 0, 0);
+    ctx.restore();
+  });
+  
+  // 粒子
+  particles.forEach(p => {
+    ctx.globalAlpha = p.life;
+    ctx.fillStyle = p.color;
+    ctx.beginPath();
+    ctx.arc(p.x, p.y, p.size * p.life, 0, Math.PI * 2);
+    ctx.fill();
+    ctx.globalAlpha = 1;
+  });
+  
+  // 篮子
+  ctx.save();
+  ctx.translate(basket.x + basket.w / 2, basket.y + basket.h / 2);
+  
+  // 篮子身体
+  ctx.fillStyle = '#8B4513';
+  ctx.beginPath();
+  ctx.ellipse(0, 5, basket.w / 2, basket.h / 3, 0, 0, Math.PI * 2);
+  ctx.fill();
+  
+  // 篮子边缘
+  ctx.strokeStyle = '#D2691E';
+  ctx.lineWidth = 4;
+  ctx.beginPath();
+  ctx.ellipse(0, -basket.h / 4, basket.w / 2 + 5, basket.h / 4, 0, 0, Math.PI * 2);
+  ctx.stroke();
+  
+  // 篮子内
+  ctx.fillStyle = '#DEB887';
+  ctx.beginPath();
+  ctx.ellipse(0, -basket.h / 4, basket.w / 2 - 5, basket.h / 4 - 3, 0, 0, Math.PI * 2);
+  ctx.fill();
+  
+  ctx.restore();
+  
+  // combo显示
+  if (combo >= 3 && comboTimer > 0) {
+    ctx.save();
+    ctx.globalAlpha = Math.min(1, comboTimer / 30);
+    ctx.fillStyle = '#ffd700';
+    ctx.font = `bold ${24 + combo * 2}px PingFang SC`;
+    ctx.textAlign = 'center';
+    ctx.fillText(`${combo}连！`, canvas.width / 2, canvas.height / 2 - 50);
+    ctx.restore();
+  }
+}
+
+function drawCloud(x, y, scale) {
+  ctx.save();
+  ctx.translate(x, y);
+  ctx.scale(scale, scale);
+  ctx.beginPath();
+  ctx.arc(0, 0, 30, 0, Math.PI * 2);
+  ctx.arc(25, -10, 25, 0, Math.PI * 2);
+  ctx.arc(50, 0, 30, 0, Math.PI * 2);
+  ctx.arc(25, 10, 20, 0, Math.PI * 2);
+  ctx.fill();
+  ctx.restore();
+}
+
+// ============================================================
+function gameLoop(ts) {
+  const dt = ts - lastTime;
+  lastTime = ts;
+  
+  update(dt);
+  draw();
+  
+  requestAnimationFrame(gameLoop);
+}
+
+// ============================================================
+// 广告
+function showAd(callback) {
+  const overlay = document.createElement('div');
+  overlay.style = 'position:fixed;top:0;left:0;right:0;bottom:0;background:#000;display:flex;align-items:center;justify-content:center;z-index:999;flex-direction:column;color:white;font-family:PingFang SC,sans-serif;';
+  overlay.innerHTML = '<div style="font-size:56px;margin-bottom:20px;">🎬</div><div style="font-size:24px;">广告播放中...</div>';
+  document.body.appendChild(overlay);
+  setTimeout(() => { overlay.remove(); if (callback) callback(); }, 2000);
+}
+
+// ============================================================
+// 输入
+let dragging = false;
+
+canvas.addEventListener('mousedown', e => {
+  dragging = true;
+  touchX = e.clientX;
+});
+
+canvas.addEventListener('mousemove', e => {
+  if (!dragging || state !== 'playing') return;
+  if (touchX !== null) {
+    const dx = e.clientX - touchX;
+    basket.x = Math.max(0, Math.min(canvas.width - basket.w, basket.x + dx));
+    touchX = e.clientX;
+  }
+});
+
+canvas.addEventListener('mouseup', () => { dragging = false; touchX = null; });
+
+canvas.addEventListener('touchstart', e => {
+  e.preventDefault();
+  dragging = true;
+  touchX = e.touches[0].clientX;
+}, { passive: false });
+
+canvas.addEventListener('touchmove', e => {
+  e.preventDefault();
+  if (!dragging || state !== 'playing') return;
+  if (touchX !== null) {
+    const dx = e.touches[0].clientX - touchX;
+    basket.x = Math.max(0, Math.min(canvas.width - basket.w, basket.x + dx));
+    touchX = e.touches[0].clientX;
+  }
+}, { passive: false });
+
+canvas.addEventListener('touchend', () => { dragging = false; touchX = null; });
+
+// 暂停
+document.getElementById('pause-btn').addEventListener('click', () => {
+  if (state !== 'playing') return;
+  paused = !paused;
+  document.getElementById('pause-btn').textContent = paused ? '▶' : '⏸';
+});
+
+// UI按钮
+document.getElementById('start-btn').addEventListener('click', startGame);
+document.getElementById('restart-btn').addEventListener('click', () => {
+  document.getElementById('gameover-screen').style.display = 'none';
+  startGame();
+});
+document.getElementById('share-btn').addEventListener('click', () => {
+  showAd(() => {
+    coins += Math.floor(score / 2);
+    localStorage.setItem('fruit_coins', coins);
+    document.getElementById('share-btn').textContent = '已双倍！';
+    document.getElementById('share-btn').disabled = true;
+    updateUI();
+  });
+});
+
+// 初始化
+document.getElementById('ui').style.display = 'none';
+document.getElementById('coins').textContent = coins;
+basket.x = canvas.width / 2 - basket.w / 2;
+basket.y = canvas.height - 100;
+
+gameLoop(0);
+</script>
+</body>
+</html>

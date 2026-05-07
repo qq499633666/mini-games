@@ -1,0 +1,191 @@
+<!DOCTYPE html>
+<html lang="zh">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>俄罗斯方块</title>
+<style>
+*{margin:0;padding:0;box-sizing:border-box}
+body{background:#0a0a1a;display:flex;justify-content:center;align-items:center;height:100vh;color:white;font-family:system-ui;overflow:hidden}
+#wrap{display:flex;gap:20px;align-items:flex-start}
+canvas{border:2px solid #4a9eff;border-radius:4px;background:#0d0d20}
+#side{margin-top:5px;display:flex;flex-direction:column;gap:10px;font-size:13px;color:#aaa;min-width:90px}
+.btn{padding:10px;background:#4a9eff;border:none;border-radius:6px;color:white;cursor:pointer;font-size:13px}
+.btn:active{background:#2277dd}
+#ad-overlay{position:fixed;inset:0;background:rgba(0,0,0,0.85);display:none;justify-content:center;align-items:center;flex-direction:column;z-index:10}
+#ad-panel{background:#1a1a2e;border:2px solid #9b59b6;border-radius:16px;padding:30px;text-align:center}
+#ad-title{font-size:22px;margin-bottom:8px;color:#9b59b6}
+.ad-btn{display:block;width:200px;padding:14px;background:#9b59b6;border:none;border-radius:25px;color:white;font-size:16px;cursor:pointer;margin:10px auto}
+#ad-countdown{font-size:28px;color:#9b59b6;margin:15px 0}
+</style>
+</head>
+<body>
+<div id="wrap">
+<div>
+<canvas id="c" width="220" height="440"></canvas>
+</div>
+<div id="side">
+<div>得分: <b id="score">0</b></div>
+<div>最高: <b id="hi">0</b></div>
+<div>命: <b id="lives">3</b></div>
+<hr style="border-color:#333;margin:5px 0">
+<div>下一个:</div>
+<canvas id="next" width="80" height="80"></canvas>
+<hr style="border-color:#333;margin:5px 0">
+<button class="btn" onclick="togglePause()">暂停</button>
+</div>
+</div>
+<div id="ad-overlay">
+<div id="ad-panel">
+<div id="ad-title">🎮 看广告续玩</div>
+<div style="color:#aaa;margin-bottom:20px">看视频立即复活！</div>
+<div id="ad-countdown">3</div>
+<button class="ad-btn" onclick="skipAd()">观看广告 (+1命)</button>
+<button class="ad-btn" onclick="closeAd()" style="background:#555">结束游戏</button>
+</div>
+</div>
+<script>
+const C=document.getElementById('c'),ctx=C.getContext('2d');
+const NW=10,NH=22,S=20;
+const nc=document.getElementById('next'),nctx=nc.getContext('2d');
+const SHAPES=['I','O','T','S','Z','J','L'];
+const SHAPE_DATA={
+I:[[0,0,0,0],[1,1,1,1]],
+O:[[1,1],[1,1]],
+T:[[0,1,0],[1,1,1]],
+S:[[0,1,1],[1,1,0]],
+Z:[[1,1,0],[0,1,1]],
+J:[[1,0,0],[1,1,1]],
+L:[[0,0,1],[1,1,1]]
+};
+const COLORS={I:'#00e5ff',O:'#ffeb3b',T:'#9c27b0',S:'#4caf50',Z:'#f44336',J:'#2196f3',L:'#ff9800'};
+let board,current,nextPiece,score,hiscore,lives,paused,gameOver,interval;
+hiscore=+localStorage.getItem('tetris_hi')||0;
+document.getElementById('hi').textContent=hiscore;
+
+function createBoard(){
+board=Array.from({length:NH},()=>Array(NW).fill(0));
+}
+
+function randomPiece(){
+const type=SHAPES[Math.floor(Math.random()*SHAPES.length)];
+return{type,rot:0,shape:SHAPE_DATA[type].map(r=>[...r]),x:Math.floor(NW/2)-2,y:0,color:COLORS[type]};
+}
+
+function canMove(p,x,y,rot){
+const shape=p.shape;
+for(let r=0;r<shape.length;r++)
+for(let c=0;c<shape[r].length;c++){
+if(shape[r][c]){
+const nx=x+c,ny=y+r;
+if(nx<0||nx>=NW||ny>=NH)return false;
+if(ny>=0&&board[ny][nx])return false;
+}}
+return true;
+}
+
+function rotate(p){
+const rs=(p.shape[0].length===p.shape.length)?p.shape:p.shape[0].map((_,ci)=>p.shape.map(row=>row[ci])).reverse();
+return{...p,shape:rs,rot:(p.rot+1)%4};
+}
+
+function lockPiece(){
+current.shape.forEach((row,r)=>row.forEach((v,c)=>{
+if(v&&current.y+r>=0)board[current.y+r][current.x+c]=current.color;
+}));
+clearLines();
+current=nextPiece;nextPiece=randomPiece();
+drawNext();
+if(!canMove(current,current.x,current.y,current.rot)){
+gameOver=true;clearInterval(interval);
+setTimeout(showAd,400);
+}
+}
+
+function clearLines(){
+let lines=0;
+for(let r=NH-1;r>=0;r--){
+if(board[r].every(v=>v!==0)){
+board.splice(r,1);board.unshift(Array(NW).fill(0));
+lines++;
+}}
+if(lines>0){
+score+=lines*lines*100;
+if(score>hiscore){hiscore=score;localStorage.setItem('tetris_hi',hiscore);}
+document.getElementById('score').textContent=score;
+document.getElementById('hi').textContent=hiscore;
+}}
+
+function draw(){
+ctx.clearRect(0,0,C.width,C.height);
+ctx.strokeStyle='#1a1a3a';ctx.lineWidth=0.5;
+for(let x=0;x<=NW;x++)ctx.beginPath().moveTo(x*S,0).lineTo(x*S,NH*S).stroke();
+for(let y=0;y<=NH;y++)ctx.beginPath().moveTo(0,y*S).lineTo(NW*S,y*S).stroke();
+for(let r=0;r<NH;r++)for(let c=0;c<NW;c++)if(board[r][c]){ctx.fillStyle=board[r][c];ctx.fillRect(c*S+1,r*S+1,S-2,S-2);}
+if(!current||gameOver)return;
+current.shape.forEach((row,r)=>row.forEach((v,c)=>{
+if(v&&current.y+r>=0){ctx.fillStyle=current.color;ctx.fillRect((current.x+c)*S+1,(current.y+r)*S+1,S-2,S-2);}
+}));
+}
+
+function drawNext(){
+nctx.clearRect(0,0,80,80);
+if(!nextPiece)return;
+const s=nextPiece.shape,scale=16;
+s.forEach((row,r)=>row.forEach((v,c)=>{
+if(v){nctx.fillStyle=nextPiece.color;nctx.fillRect(c*scale+2,r*scale+2,scale-4,scale-4);}
+}));
+}
+
+function tick(){
+if(paused||gameOver)return;
+if(canMove(current,current.x,current.y+1,current.rot))current.y++;
+else lockPiece();
+draw();
+}
+
+function startGame(){
+createBoard();score=0;lives=3;gameOver=false;paused=false;
+document.getElementById('score').textContent=0;
+document.getElementById('lives').textContent=3;
+current=randomPiece();nextPiece=randomPiece();drawNext();draw();
+if(interval)clearInterval(interval);
+interval=setInterval(tick,600);
+}
+
+function togglePause(){
+if(gameOver)return;
+paused=!paused;
+document.querySelector('.btn').textContent=paused?'继续':'暂停';
+}
+
+function showAd(){
+if(lives<=0){document.getElementById('lives').textContent=0;return;}
+document.getElementById('ad-overlay').style.display='flex';
+let n=3,cd=document.getElementById('ad-countdown');cd.textContent=n;
+const iv=setInterval(()=>{n--;cd.textContent=n;if(n<=0)clearInterval(iv);},1000);
+}
+
+function skipAd(){
+document.getElementById('ad-overlay').style.display='none';
+lives--;document.getElementById('lives').textContent=lives;
+gameOver=false;current=randomPiece();nextPiece=randomPiece();drawNext();
+if(interval)clearInterval(interval);
+interval=setInterval(tick,600);
+draw();
+}
+
+function closeAd(){
+document.getElementById('ad-overlay').style.display='none';
+}
+
+document.addEventListener('keydown',e=>{
+if(e.key==='ArrowLeft'&&!paused&&canMove(current,current.x-1,current.y,current.rot)){current.x--;draw();}
+if(e.key==='ArrowRight'&&!paused&&canMove(current,current.x+1,current.y,current.rot)){current.x++;draw();}
+if(e.key==='ArrowDown'&&!paused){tick();draw();}
+if(e.key==='ArrowUp'&&!paused){const r=rotate(current);if(canMove(r,r.x,r.y,r.rot))current=r;draw();}
+if(e.key===' '||e.key==='p')togglePause();
+});
+
+startGame();
+</script></body></html>

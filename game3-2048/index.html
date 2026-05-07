@@ -1,0 +1,440 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+  <title>2048 益智挑战</title>
+  <style>
+    * { margin: 0; padding: 0; box-sizing: border-box; }
+    body { background: #1a1a2e; display: flex; justify-content: center; align-items: center; min-height: 100vh; font-family: 'PingFang SC', sans-serif; }
+    
+    .game-container { text-align: center; color: white; padding: 15px; }
+    
+    .header { display: flex; justify-content: space-between; align-items: center; margin-bottom: 15px; }
+    .title { font-size: 28px; font-weight: bold; }
+    .score-box { background: #16213e; padding: 10px 20px; border-radius: 12px; }
+    .score-label { font-size: 12px; color: #aaa; }
+    .score-value { font-size: 24px; font-weight: bold; color: #ffd700; }
+    .best-value { font-size: 18px; color: #4facfe; }
+    
+    .grid-container {
+      display: inline-block;
+      background: #0f3460;
+      border-radius: 12px;
+      padding: 8px;
+      box-shadow: 0 10px 30px rgba(0,0,0,0.5);
+    }
+    
+    .grid {
+      display: grid;
+      grid-template-columns: repeat(4, 75px);
+      grid-template-rows: repeat(4, 75px);
+      gap: 8px;
+    }
+    
+    .cell {
+      border-radius: 8px;
+      display: flex; align-items: center; justify-content: center;
+      font-size: 32px; font-weight: bold;
+      transition: all 0.15s ease;
+    }
+    
+    .controls { margin-top: 20px; display: flex; gap: 10px; justify-content: center; }
+    .btn { padding: 12px 28px; border: none; border-radius: 25px; font-size: 16px; font-weight: bold; cursor: pointer; transition: transform 0.15s; }
+    .btn:active { transform: scale(0.93); }
+    .btn-primary { background: linear-gradient(135deg, #667eea, #764ba2); color: white; }
+    .btn-secondary { background: #16213e; color: white; }
+    .btn-ad { background: linear-gradient(135deg, #f093fb, #f5576c); color: white; }
+    .btn-ad::before { content: '🎬 '; }
+    
+    .overlay {
+      position: fixed; top: 0; left: 0; right: 0; bottom: 0;
+      background: rgba(0,0,0,0.8); display: flex; flex-direction: column;
+      align-items: center; justify-content: center; z-index: 100; color: white;
+    }
+    .overlay-title { font-size: 48px; margin-bottom: 15px; }
+    .overlay-score { font-size: 36px; color: #ffd700; }
+    .overlay-sub { color: #aaa; margin: 15px 0 25px; }
+    .overlay { display: none; }
+    
+    .tip { font-size: 13px; color: #666; margin-top: 15px; }
+    
+    /* 颜色表 */
+    .c2 { background: #eee4da; color: #776e65; }
+    .c4 { background: #ede0c8; color: #776e65; }
+    .c8 { background: #f2b179; color: white; }
+    .c16 { background: #f59563; color: white; }
+    .c32 { background: #f67c5f; color: white; }
+    .c64 { background: #f65e3b; color: white; }
+    .c128 { background: #edcf72; color: white; }
+    .c256 { background: #edcc61; color: white; }
+    .c512 { background: #edc850; color: white; }
+    .c1024 { background: #edc53f; color: white; font-size: 24px; }
+    .c2048 { background: linear-gradient(135deg, #667eea, #764ba2); color: white; font-size: 24px; }
+    .c4096 { background: linear-gradient(135deg, #f093fb, #f5576c); color: white; font-size: 24px; }
+    .c8192 { background: #1a1a2e; color: #f5576c; font-size: 24px; }
+  </style>
+</head>
+<body>
+
+<div class="game-container">
+  <div class="header">
+    <div class="title">2048</div>
+    <div style="display:flex;gap:10px;">
+      <div class="score-box">
+        <div class="score-label">当前</div>
+        <div class="score-value" id="score">0</div>
+      </div>
+      <div class="score-box">
+        <div class="score-label">最高</div>
+        <div class="best-value" id="best">0</div>
+      </div>
+      <div class="score-box">
+        <div class="score-label">💰</div>
+        <div class="best-value" id="coins">0</div>
+      </div>
+    </div>
+  </div>
+  
+  <div class="grid-container">
+    <div class="grid" id="grid"></div>
+  </div>
+  
+  <div class="controls">
+    <button class="btn btn-secondary" onclick="newGame()">新游戏</button>
+    <button class="btn btn-ad" onclick="useHint()">💡 提示</button>
+    <button class="btn btn-primary" onclick="useUndo()">↩️ 撤销</button>
+  </div>
+  <div class="tip">用方向键或滑动来移动方块，相邻相同数字会合并</div>
+</div>
+
+<div class="overlay" id="win-overlay">
+  <div class="overlay-title">🎉 2048!</div>
+  <div class="overlay-score" id="win-score">0</div>
+  <div class="overlay-sub">你创造了历史！</div>
+  <button class="btn btn-primary" onclick="continueGame()">继续挑战</button>
+  <button class="btn btn-ad" onclick="claimWin()">🎬 领双倍金币</button>
+</div>
+
+<div class="overlay" id="lose-overlay">
+  <div class="overlay-title">游戏结束</div>
+  <div class="overlay-score" id="lose-score">0</div>
+  <div class="overlay-sub">没有可移动的空间了</div>
+  <button class="btn btn-primary" onclick="newGame()">再来一局</button>
+  <button class="btn btn-ad" onclick="reviveWithAd()">🎬 看广告复活</button>
+</div>
+
+<script>
+// ============================================================
+// 游戏状态
+// ============================================================
+let grid = [];
+let score = 0;
+let best = parseInt(localStorage.getItem('2048_best') || '0');
+let coins = parseInt(localStorage.getItem('2048_coins') || '0');
+let gameOver = false;
+let won = false;
+let hintUsed = false;
+let history = [];
+
+const SIZE = 4;
+
+function init() {
+  grid = Array(SIZE).fill(null).map(() => Array(SIZE).fill(0));
+  score = 0;
+  gameOver = false;
+  won = false;
+  hintUsed = false;
+  history = [];
+  addRandomTile();
+  addRandomTile();
+  render();
+  updateScore();
+  document.getElementById('best').textContent = best;
+  document.getElementById('coins').textContent = coins;
+}
+
+function newGame() {
+  document.getElementById('win-overlay').style.display = 'none';
+  document.getElementById('lose-overlay').style.display = 'none';
+  init();
+}
+
+function continueGame() {
+  document.getElementById('win-overlay').style.display = 'none';
+  won = false;
+}
+
+function addRandomTile() {
+  const empty = [];
+  for (let r = 0; r < SIZE; r++) {
+    for (let c = 0; c < SIZE; c++) {
+      if (grid[r][c] === 0) empty.push({ r, c });
+    }
+  }
+  if (empty.length === 0) return false;
+  const { r, c } = empty[Math.floor(Math.random() * empty.length)];
+  grid[r][c] = Math.random() < 0.9 ? 2 : 4;
+  return true;
+}
+
+function render() {
+  const gridEl = document.getElementById('grid');
+  gridEl.innerHTML = '';
+  
+  for (let r = 0; r < SIZE; r++) {
+    for (let c = 0; c < SIZE; c++) {
+      const div = document.createElement('div');
+      div.className = 'cell';
+      const val = grid[r][c];
+      if (val > 0) {
+        div.classList.add('c' + Math.min(val, 8192));
+        div.textContent = val;
+      }
+      gridEl.appendChild(div);
+    }
+  }
+}
+
+function updateScore() {
+  document.getElementById('score').textContent = score;
+  if (score > best) {
+    best = score;
+    localStorage.setItem('2048_best', best);
+    document.getElementById('best').textContent = best;
+  }
+}
+
+// ============================================================
+// 核心移动逻辑
+// ============================================================
+function saveHistory() {
+  history.push({ grid: grid.map(row => [...row]), score });
+  if (history.length > 5) history.shift();
+}
+
+function move(dir) {
+  if (gameOver && !won) return;
+  
+  saveHistory();
+  
+  let moved = false;
+  const oldGrid = grid.map(row => [...row]);
+  
+  if (dir === 'left' || dir === 'right' || dir === 'up' || dir === 'down') {
+    const rotated = rotateGrid(grid, dir);
+    
+    rotated.forEach((row, ri) => {
+      const filtered = row.filter(v => v !== 0);
+      const merged = [];
+      
+      for (let i = 0; i < filtered.length; i++) {
+        if (i < filtered.length - 1 && filtered[i] === filtered[i + 1]) {
+          const newVal = filtered[i] * 2;
+          merged.push(newVal);
+          score += newVal;
+          if (newVal === 2048 && !won) {
+            won = true;
+            setTimeout(() => showWin(), 300);
+          }
+          i++;
+        } else {
+          merged.push(filtered[i]);
+        }
+      }
+      
+      while (merged.length < SIZE) merged.push(0);
+      rotated[ri] = merged;
+    });
+    
+    grid = unrotateGrid(rotated, dir);
+  }
+  
+  for (let r = 0; r < SIZE; r++) {
+    for (let c = 0; c < SIZE; c++) {
+      if (grid[r][c] !== oldGrid[r][c]) moved = true;
+    }
+  }
+  
+  if (moved) {
+    addRandomTile();
+    render();
+    updateScore();
+    
+    // 检查游戏结束
+    if (!canMove()) {
+      gameOver = true;
+      setTimeout(() => showLose(), 300);
+    }
+  } else {
+    history.pop(); // 没动，不记录
+  }
+}
+
+function rotateGrid(g, dir) {
+  let result = g.map(row => [...row]);
+  if (dir === 'up') result = transpose(g);
+  if (dir === 'down') result = transpose(g).map(row => row.reverse());
+  if (dir === 'right') result = g.map(row => row.reverse());
+  return result;
+}
+
+function unrotateGrid(g, dir) {
+  let result = g;
+  if (dir === 'up') result = transpose(g);
+  if (dir === 'down') result = transpose(g.map(row => row.reverse()));
+  if (dir === 'right') result = g.map(row => row.reverse());
+  return result;
+}
+
+function transpose(g) {
+  const result = [];
+  for (let c = 0; c < SIZE; c++) {
+    result.push(g.map(row => row[c]));
+  }
+  return result;
+}
+
+function canMove() {
+  for (let r = 0; r < SIZE; r++) {
+    for (let c = 0; c < SIZE; c++) {
+      if (grid[r][c] === 0) return true;
+      if (c < SIZE - 1 && grid[r][c] === grid[r][c + 1]) return true;
+      if (r < SIZE - 1 && grid[r][c] === grid[r + 1][c]) return true;
+    }
+  }
+  return false;
+}
+
+// ============================================================
+// 提示
+// ============================================================
+function useHint() {
+  showAd(() => {
+    const dirs = ['up', 'down', 'left', 'right'];
+    let bestDir = 'left';
+    let bestScore = -1;
+    
+    dirs.forEach(dir => {
+      const g = rotateGrid(grid.map(row => [...row]), dir);
+      let s = 0;
+      g.forEach(row => {
+        const filtered = row.filter(v => v !== 0);
+        for (let i = 0; i < filtered.length - 1; i++) {
+          if (filtered[i] === filtered[i + 1]) s += filtered[i] * 2;
+        }
+      });
+      if (s > bestScore) { bestScore = s; bestDir = dir; }
+    });
+    
+    alert(`💡 建议：向「${bestDir === 'up' ? '上' : bestDir === 'down' ? '下' : bestDir === 'left' ? '左' : '右'}」滑动`);
+  });
+}
+
+function useUndo() {
+  if (history.length === 0) {
+    alert('没有可撤销的步数！');
+    return;
+  }
+  
+  showAd(() => {
+    const prev = history.pop();
+    grid = prev.grid;
+    score = prev.score;
+    render();
+    updateScore();
+  });
+}
+
+// ============================================================
+// 胜负
+// ============================================================
+function showWin() {
+  const earned = 100 + score;
+  coins += earned;
+  localStorage.setItem('2048_coins', coins);
+  document.getElementById('coins').textContent = coins;
+  document.getElementById('win-score').textContent = '💰 +' + earned;
+  document.getElementById('win-overlay').style.display = 'flex';
+}
+
+function showLose() {
+  document.getElementById('lose-score').textContent = '得分: ' + score;
+  document.getElementById('lose-overlay').style.display = 'flex';
+}
+
+function claimWin() {
+  showAd(() => {
+    const bonus = 100 + score;
+    coins += bonus;
+    localStorage.setItem('2048_coins', coins);
+    document.getElementById('coins').textContent = coins;
+    document.getElementById('win-overlay').style.display = 'none';
+    won = false;
+  });
+}
+
+function reviveWithAd() {
+  showAd(() => {
+    // 给2次额外移动
+    addRandomTile();
+    addRandomTile();
+    render();
+    gameOver = false;
+    document.getElementById('lose-overlay').style.display = 'none';
+  });
+}
+
+// ============================================================
+// 广告
+// ============================================================
+function showAd(callback) {
+  const overlay = document.createElement('div');
+  overlay.style = 'position:fixed;top:0;left:0;right:0;bottom:0;background:#000;display:flex;align-items:center;justify-content:center;z-index:999;flex-direction:column;color:white;font-family:PingFang SC,sans-serif;';
+  overlay.innerHTML = '<div style="font-size:56px;margin-bottom:20px;">🎬</div><div style="font-size:24px;">广告播放中...</div><div style="margin-top:15px;font-size:14px;color:#666;">（模拟）</div>';
+  document.body.appendChild(overlay);
+  setTimeout(() => { overlay.remove(); if (callback) callback(); }, 2000);
+}
+
+// ============================================================
+// 输入
+// ============================================================
+// 键盘
+document.addEventListener('keydown', e => {
+  if (['ArrowUp','ArrowDown','ArrowLeft','ArrowRight'].includes(e.key)) {
+    e.preventDefault();
+    const map = { ArrowUp: 'up', ArrowDown: 'down', ArrowLeft: 'left', ArrowRight: 'right' };
+    move(map[e.key]);
+  }
+});
+
+// 触摸滑动
+let touchStartX, touchStartY;
+document.addEventListener('touchstart', e => {
+  touchStartX = e.touches[0].clientX;
+  touchStartY = e.touches[0].clientY;
+}, { passive: true });
+
+document.addEventListener('touchend', e => {
+  if (!touchStartX || !touchStartY) return;
+  const dx = e.changedTouches[0].clientX - touchStartX;
+  const dy = e.changedTouches[0].clientY - touchStartY;
+  const absDx = Math.abs(dx);
+  const absDy = Math.abs(dy);
+  
+  if (Math.max(absDx, absDy) < 30) return;
+  
+  if (absDx > absDy) {
+    move(dx > 0 ? 'right' : 'left');
+  } else {
+    move(dy > 0 ? 'down' : 'up');
+  }
+}, { passive: true });
+
+// ============================================================
+// 启动
+// ============================================================
+init();
+</script>
+</body>
+</html>

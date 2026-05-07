@@ -1,0 +1,804 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+  <title>泡泡龙消消乐</title>
+  <style>
+    * { margin: 0; padding: 0; box-sizing: border-box; }
+    body { background: #1a1a2e; display: flex; justify-content: center; align-items: center; min-height: 100vh; font-family: 'PingFang SC', sans-serif; overflow: hidden; }
+    
+    .game-wrap { text-align: center; color: white; padding: 10px; }
+    
+    .header { display: flex; justify-content: space-between; align-items: center; margin-bottom: 10px; padding: 0 5px; }
+    .title { font-size: 22px; font-weight: bold; }
+    .score-box { background: #16213e; padding: 8px 16px; border-radius: 10px; min-width: 70px; }
+    .score-label { font-size: 11px; color: #888; }
+    .score-value { font-size: 20px; font-weight: bold; color: #ffd700; }
+    
+    canvas { border-radius: 12px; box-shadow: 0 8px 32px rgba(0,0,0,0.5); cursor: crosshair; }
+    
+    .controls { margin-top: 12px; display: flex; gap: 10px; justify-content: center; }
+    .btn { padding: 10px 24px; border: none; border-radius: 25px; font-size: 15px; font-weight: bold; cursor: pointer; transition: transform 0.15s; }
+    .btn:active { transform: scale(0.93); }
+    .btn-primary { background: linear-gradient(135deg, #667eea, #764ba2); color: white; }
+    .btn-ad { background: linear-gradient(135deg, #f093fb, #f5576c); color: white; }
+    .btn-ad::before { content: '🎬 '; }
+    
+    .overlay {
+      position: fixed; top: 0; left: 0; right: 0; bottom: 0;
+      background: rgba(0,0,0,0.85); display: none; flex-direction: column;
+      align-items: center; justify-content: center; z-index: 100; color: white;
+    }
+    .overlay-title { font-size: 44px; font-weight: bold; margin-bottom: 10px; }
+    .overlay-sub { font-size: 18px; color: #aaa; margin-bottom: 25px; }
+    .overlay-score { font-size: 64px; color: #ffd700; font-weight: bold; }
+    .overlay-best { font-size: 15px; color: #888; margin-top: 8px; }
+    
+    .tip { font-size: 12px; color: #666; margin-top: 10px; }
+    
+    .next-bubble {
+      position: absolute; top: 80px; right: 20px;
+      background: #16213e; border-radius: 10px; padding: 8px 12px;
+      font-size: 13px; color: #aaa;
+    }
+  </style>
+</head>
+<body>
+
+<div class="game-wrap" id="game-wrap">
+  <div class="header">
+    <div class="title">🫧 泡泡龙</div>
+    <div style="display:flex;gap:10px;">
+      <div class="score-box">
+        <div class="score-label">分数</div>
+        <div class="score-value" id="score">0</div>
+      </div>
+      <div class="score-box">
+        <div class="score-label">💰</div>
+        <div class="score-value" id="coins">0</div>
+      </div>
+    </div>
+  </div>
+  
+  <canvas id="gameCanvas"></canvas>
+  
+  <div class="controls">
+    <button class="btn btn-primary" onclick="newGame()">新游戏</button>
+    <button class="btn btn-ad" onclick="useBomb()">💣 使用炸弹</button>
+    <button class="btn btn-primary" onclick="pauseGame()">⏸ 暂停</button>
+  </div>
+  <div class="tip">点击发射泡泡，3个以上相同颜色消除</div>
+</div>
+
+<div class="overlay" id="win-overlay">
+  <div class="overlay-title">🎉 关卡通过！</div>
+  <div class="overlay-score" id="win-score">0</div>
+  <button class="btn btn-primary" onclick="nextLevel()">下一关</button>
+  <button class="btn btn-ad" onclick="claimWinBonus()">🎬 领双倍奖励</button>
+</div>
+
+<div class="overlay" id="lose-overlay">
+  <div class="overlay-title">💀 游戏结束</div>
+  <div class="overlay-score" id="lose-score">0</div>
+  <div class="overlay-best" id="lose-best">历史最高: 0</div>
+  <button class="btn btn-primary" onclick="newGame()">再来一局</button>
+  <button class="btn btn-ad" onclick="reviveWithAd()">🎬 看广告复活</button>
+</div>
+
+<script>
+// ============================================================
+const canvas = document.getElementById('gameCanvas');
+const ctx = canvas.getContext('2d');
+
+const W = 360;
+const H = 540;
+canvas.width = W;
+canvas.height = H;
+
+function resize() {
+  const scale = Math.min(window.innerWidth / W, window.innerHeight / (H + 80));
+  canvas.style.width = (W * scale) + 'px';
+  canvas.style.height = (H * scale) + 'px';
+}
+resize();
+window.addEventListener('resize', resize);
+
+// ============================================================
+// 颜色配置
+// ============================================================
+const COLORS = [
+  '#e74c3c', // 红
+  '#3498db', // 蓝
+  '#2ecc71', // 绿
+  '#f1c40f', // 黄
+  '#9b59b6', // 紫
+  '#e67e22', // 橙
+];
+
+const BUBBLE_R = 18;
+const BUBBLE_D = BUBBLE_R * 2;
+
+// ============================================================
+// 状态
+// ============================================================
+let grid = []; // 二维数组，存储气泡
+let ROWS = 10;
+const COLS = 10;
+let score = 0;
+let coins = parseInt(localStorage.getItem('bubble_coins') || '0');
+let best = parseInt(localStorage.getItem('bubble_best') || '0');
+let level = 1;
+let shooter = { x: W / 2, y: H - 50, angle: -Math.PI / 2, color: null };
+let nextColor = null;
+let flyingBubble = null;
+let shots = 0;
+let state = 'menu'; // menu, playing, win, lose
+let bombs = 1;
+let gameOver = false;
+
+// ============================================================
+// 网格
+// ============================================================
+function initGrid() {
+  grid = [];
+  for (let r = 0; r < ROWS; r++) {
+    grid[r] = [];
+    for (let c = 0; c < COLS; c++) {
+      // 奇数行偏移
+      const offset = (r % 2 === 1) ? BUBBLE_R : 0;
+      grid[r][c] = r < 4 ? {
+        color: COLORS[Math.floor(Math.random() * Math.min(COLORS.length, 3 + level))],
+        x: c * BUBBLE_D + BUBBLE_R + offset,
+        y: r * (BUBBLE_D - 4) + BUBBLE_R + 10
+      } : null;
+    }
+  }
+}
+
+function newGame() {
+  score = 0;
+  level = 1;
+  shots = 0;
+  bombs = 1;
+  gameOver = false;
+  flyingBubble = null;
+  state = 'playing';
+  
+  initGrid();
+  shooter.color = randomAvailableColor();
+  nextColor = randomAvailableColor();
+  
+  document.getElementById('win-overlay').style.display = 'none';
+  document.getElementById('lose-overlay').style.display = 'none';
+  document.getElementById('score').textContent = '0';
+  document.getElementById('coins').textContent = coins;
+}
+
+function nextLevel() {
+  level++;
+  shots = 0;
+  flyingBubble = null;
+  state = 'playing';
+  
+  // 添加新行到底部
+  for (let r = ROWS - 1; r >= 1; r--) {
+    grid[r] = grid[r - 1].map(b => b ? { ...b } : null);
+  }
+  // 第一行填满
+  grid[0] = [];
+  for (let c = 0; c < COLS; c++) {
+    const offset = (0 % 2 === 1) ? BUBBLE_R : 0;
+    grid[0][c] = {
+      color: COLORS[Math.floor(Math.random() * Math.min(COLORS.length, 3 + level))],
+      x: c * BUBBLE_D + BUBBLE_R + offset,
+      y: BUBBLE_R + 10
+    };
+  }
+  // 重新计算所有坐标
+  recalcGrid();
+  
+  shooter.color = nextColor;
+  nextColor = randomAvailableColor();
+  
+  document.getElementById('win-overlay').style.display = 'none';
+}
+
+function recalcGrid() {
+  for (let r = 0; r < ROWS; r++) {
+    for (let c = 0; c < COLS; c++) {
+      if (grid[r][c]) {
+        const offset = (r % 2 === 1) ? BUBBLE_R : 0;
+        grid[r][c].x = c * BUBBLE_D + BUBBLE_R + offset;
+        grid[r][c].y = r * (BUBBLE_D - 4) + BUBBLE_R + 10;
+      }
+    }
+  }
+}
+
+function randomAvailableColor() {
+  const usedColors = new Set();
+  for (let r = 0; r < ROWS; r++) {
+    for (let c = 0; c < COLS; c++) {
+      if (grid[r][c]) usedColors.add(grid[r][c].color);
+    }
+  }
+  const available = [...usedColors];
+  if (available.length === 0) return COLORS[Math.floor(Math.random() * COLORS.length)];
+  return available[Math.floor(Math.random() * available.length)];
+}
+
+// ============================================================
+// 射击
+// ============================================================
+function shoot() {
+  if (flyingBubble || state !== 'playing') return;
+  
+  const speed = 14;
+  flyingBubble = {
+    x: shooter.x,
+    y: shooter.y,
+    vx: Math.cos(shooter.angle) * speed,
+    vy: Math.sin(shooter.angle) * speed,
+    r: BUBBLE_R,
+    color: shooter.color
+  };
+  
+  shots++;
+}
+
+// ============================================================
+// 更新飞行中的泡泡
+// ============================================================
+function updateFlying() {
+  if (!flyingBubble) return;
+  
+  const b = flyingBubble;
+  b.x += b.vx;
+  b.y += b.vy;
+  
+  // 左右墙反弹
+  if (b.x - b.r < 0) { b.x = b.r; b.vx *= -1; }
+  if (b.x + b.r > W) { b.x = W - b.r; b.vx *= -1; }
+  
+  // 顶部反弹
+  if (b.y - b.r < 10) {
+    b.y = 10 + b.r;
+    snapBubble(b);
+    return;
+  }
+  
+  // 检测碰撞其他气泡
+  for (let r = 0; r < ROWS; r++) {
+    for (let c = 0; c < COLS; c++) {
+      const other = grid[r][c];
+      if (!other) continue;
+      
+      const dx = b.x - other.x;
+      const dy = b.y - other.y;
+      const dist = Math.sqrt(dx*dx + dy*dy);
+      
+      if (dist < BUBBLE_D - 2) {
+        snapBubble(b);
+        return;
+      }
+    }
+  }
+}
+
+function snapBubble(b) {
+  // 找到最近的空位
+  let bestR = -1, bestC = -1, bestDist = Infinity;
+  
+  for (let r = 0; r < ROWS; r++) {
+    for (let c = 0; c < COLS; c++) {
+      if (grid[r][c]) continue;
+      
+      const offset = (r % 2 === 1) ? BUBBLE_R : 0;
+      const bx = c * BUBBLE_D + BUBBLE_R + offset;
+      const by = r * (BUBBLE_D - 4) + BUBBLE_R + 10;
+      
+      const dx = b.x - bx;
+      const dy = b.y - by;
+      const dist = Math.sqrt(dx*dx + dy*dy);
+      
+      if (dist < bestDist) {
+        bestDist = dist;
+        bestR = r;
+        bestC = c;
+      }
+    }
+  }
+  
+  if (bestR === -1) {
+    // 没有空位了，游戏结束
+    endGame();
+    return;
+  }
+  
+  // 放置泡泡
+  const offset = (bestR % 2 === 1) ? BUBBLE_R : 0;
+  grid[bestR][bestC] = {
+    color: b.color,
+    x: bestC * BUBBLE_D + BUBBLE_R + offset,
+    y: bestR * (BUBBLE_D - 4) + BUBBLE_R + 10
+  };
+  
+  flyingBubble = null;
+  
+  // 找同色连接
+  const connected = findConnected(bestR, bestC, b.color);
+  
+  if (connected.length >= 3) {
+    // 消除
+    connected.forEach(({ r, c }) => {
+      grid[r][c] = null;
+      score += 10;
+    });
+    
+    // 检查悬空气泡
+    const floating = findFloating();
+    floating.forEach(({ r, c }) => {
+      grid[r][c] = null;
+      score += 20;
+    });
+  }
+  
+  // 检查是否过关
+  if (isGridEmpty()) {
+    const bonus = level * 100;
+    coins += bonus;
+    localStorage.setItem('bubble_coins', coins);
+    state = 'win';
+    document.getElementById('win-score').textContent = '💰 +' + bonus;
+    document.getElementById('win-overlay').style.display = 'flex';
+  } else {
+    // 检查游戏结束（最底部有气泡但无法继续）
+    checkGameOver();
+  }
+  
+  updateUI();
+  
+  // 下一发
+  shooter.color = nextColor;
+  nextColor = randomAvailableColor();
+}
+
+function findConnected(startR, startC, color) {
+  const result = [];
+  const visited = new Set();
+  const queue = [{ r: startR, c: startC }];
+  
+  while (queue.length > 0) {
+    const { r, c } = queue.shift();
+    const key = `${r},${c}`;
+    if (visited.has(key)) continue;
+    if (!grid[r] || !grid[r][c]) continue;
+    if (grid[r][c].color !== color) continue;
+    
+    visited.add(key);
+    result.push({ r, c });
+    
+    // 相邻格子
+    const neighbors = getNeighbors(r, c);
+    neighbors.forEach(n => queue.push(n));
+  }
+  
+  return result;
+}
+
+function getNeighbors(r, c) {
+  const result = [];
+  // 同排邻居
+  if (c > 0) result.push({ r, c: c - 1 });
+  if (c < COLS - 1) result.push({ r, c: c + 1 });
+  
+  // 上下排邻居（奇偶行错位）
+  const above = r - 1;
+  const below = r + 1;
+  
+  if (above >= 0) {
+    if (r % 2 === 0) {
+      if (c > 0) result.push({ r: above, c: c - 1 });
+      result.push({ r: above, c });
+    } else {
+      result.push({ r: above, c });
+      if (c < COLS - 1) result.push({ r: above, c: c + 1 });
+    }
+  }
+  
+  if (below < ROWS) {
+    if (r % 2 === 0) {
+      if (c > 0) result.push({ r: below, c: c - 1 });
+      result.push({ r: below, c });
+    } else {
+      result.push({ r: below, c });
+      if (c < COLS - 1) result.push({ r: below, c: c + 1 });
+    }
+  }
+  
+  return result;
+}
+
+function findFloating() {
+  // 找到所有没有连接到顶部的泡泡
+  const connected = new Set();
+  const queue = [];
+  
+  // 第一行所有气泡都连接顶部
+  for (let c = 0; c < COLS; c++) {
+    if (grid[0][c]) {
+      queue.push({ r: 0, c });
+      connected.add(`0,${c}`);
+    }
+  }
+  
+  while (queue.length > 0) {
+    const { r, c } = queue.shift();
+    const neighbors = getNeighbors(r, c);
+    
+    neighbors.forEach(n => {
+      const key = `${n.r},${n.c}`;
+      if (!connected.has(key) && grid[n.r] && grid[n.r][n.c]) {
+        connected.add(key);
+        queue.push(n);
+      }
+    });
+  }
+  
+  const floating = [];
+  for (let r = 0; r < ROWS; r++) {
+    for (let c = 0; c < COLS; c++) {
+      if (grid[r][c] && !connected.has(`${r},${c}`)) {
+        floating.push({ r, c });
+      }
+    }
+  }
+  
+  return floating;
+}
+
+function isGridEmpty() {
+  for (let r = 0; r < ROWS; r++) {
+    for (let c = 0; c < COLS; c++) {
+      if (grid[r][c]) return false;
+    }
+  }
+  return true;
+}
+
+function checkGameOver() {
+  // 如果有泡泡到达射击线附近，游戏结束
+  for (let c = 0; c < COLS; c++) {
+    for (let r = ROWS - 3; r < ROWS; r++) {
+      if (grid[r] && grid[r][c]) {
+        if (grid[r][c].y + BUBBLE_R > H - 100) {
+          endGame();
+          return;
+        }
+      }
+    }
+  }
+}
+
+function endGame() {
+  gameOver = true;
+  state = 'lose';
+  
+  if (score > best) {
+    best = score;
+    localStorage.setItem('bubble_best', best);
+  }
+  
+  const earned = Math.floor(score / 5);
+  coins += earned;
+  localStorage.setItem('bubble_coins', coins);
+  
+  document.getElementById('lose-score').textContent = score;
+  document.getElementById('lose-best').textContent = '历史最高: ' + best;
+  document.getElementById('lose-overlay').style.display = 'flex';
+  document.getElementById('score').textContent = score;
+  document.getElementById('coins').textContent = coins;
+}
+
+// ============================================================
+// 炸弹道具
+// ============================================================
+function useBomb() {
+  if (bombs <= 0 || state !== 'playing' || flyingBubble) return;
+  
+  showAd(() => {
+    bombs--;
+    
+    // 找到最下方的气泡列
+    let maxR = -1;
+    let targetC = COLS / 2;
+    
+    for (let r = ROWS - 1; r >= 0; r--) {
+      for (let c = 0; c < COLS; c++) {
+        if (grid[r] && grid[r][c]) {
+          maxR = r;
+          targetC = c;
+          break;
+        }
+      }
+      if (maxR >= 0) break;
+    }
+    
+    if (maxR >= 0) {
+      // 消除该列
+      for (let r = maxR; r >= 0; r--) {
+        if (grid[r] && grid[r][targetC]) {
+          grid[r][targetC] = null;
+          score += 15;
+        }
+      }
+      updateUI();
+      
+      // 消除悬空
+      const floating = findFloating();
+      floating.forEach(({ r, c }) => {
+        grid[r][c] = null;
+        score += 20;
+      });
+      
+      if (isGridEmpty()) {
+        const bonus = level * 100;
+        coins += bonus;
+        localStorage.setItem('bubble_coins', coins);
+        state = 'win';
+        document.getElementById('win-score').textContent = '💰 +' + bonus;
+        document.getElementById('win-overlay').style.display = 'flex';
+      }
+    }
+  });
+}
+
+// ============================================================
+// 广告
+// ============================================================
+function showAd(callback) {
+  const overlay = document.createElement('div');
+  overlay.style = 'position:fixed;top:0;left:0;right:0;bottom:0;background:#000;display:flex;align-items:center;justify-content:center;z-index:999;flex-direction:column;color:white;font-family:PingFang SC,sans-serif;';
+  overlay.innerHTML = '<div style="font-size:56px;margin-bottom:20px;">🎬</div><div style="font-size:24px;">广告播放中...</div>';
+  document.body.appendChild(overlay);
+  setTimeout(() => { overlay.remove(); if (callback) callback(); }, 2000);
+}
+
+function reviveWithAd() {
+  showAd(() => {
+    // 移除最底下一行
+    for (let r = ROWS - 1; r >= 0; r--) {
+      let hasContent = false;
+      for (let c = 0; c < COLS; c++) {
+        if (grid[r] && grid[r][c]) {
+          grid[r][c] = null;
+          hasContent = true;
+        }
+      }
+      if (hasContent) break;
+    }
+    state = 'playing';
+    gameOver = false;
+    document.getElementById('lose-overlay').style.display = 'none';
+  });
+}
+
+function claimWinBonus() {
+  showAd(() => {
+    const bonus = level * 100;
+    coins += bonus;
+    localStorage.setItem('bubble_coins', coins);
+    document.getElementById('coins').textContent = coins;
+    nextLevel();
+  });
+}
+
+function pauseGame() {
+  if (state !== 'playing') return;
+  state = state === 'paused' ? 'playing' : 'paused';
+}
+
+// ============================================================
+// 输入
+// ============================================================
+canvas.addEventListener('click', e => {
+  if (state !== 'playing' || flyingBubble) return;
+  
+  const rect = canvas.getBoundingClientRect();
+  const scaleX = W / rect.width;
+  const scaleY = H / rect.height;
+  
+  const mx = (e.clientX - rect.left) * scaleX;
+  const my = (e.clientY - rect.top) * scaleY;
+  
+  const dx = mx - shooter.x;
+  const dy = my - shooter.y;
+  shooter.angle = Math.atan2(dy, dx);
+  
+  // 限制角度
+  shooter.angle = Math.max(-Math.PI + 0.15, Math.min(-0.15, shooter.angle));
+  
+  shoot();
+});
+
+canvas.addEventListener('mousemove', e => {
+  if (state !== 'playing' || flyingBubble) return;
+  
+  const rect = canvas.getBoundingClientRect();
+  const scaleX = W / rect.width;
+  const scaleY = H / rect.height;
+  
+  const mx = (e.clientX - rect.left) * scaleX;
+  const my = (e.clientY - rect.top) * scaleY;
+  
+  const dx = mx - shooter.x;
+  const dy = my - shooter.y;
+  shooter.angle = Math.atan2(dy, dx);
+  shooter.angle = Math.max(-Math.PI + 0.15, Math.min(-0.15, shooter.angle));
+});
+
+function updateUI() {
+  document.getElementById('score').textContent = score;
+  document.getElementById('coins').textContent = coins;
+}
+
+// ============================================================
+// 绘制
+// ============================================================
+function draw() {
+  // 背景
+  const grad = ctx.createLinearGradient(0, 0, 0, H);
+  grad.addColorStop(0, '#1a1a3e');
+  grad.addColorStop(1, '#16213e');
+  ctx.fillStyle = grad;
+  ctx.fillRect(0, 0, W, H);
+  
+  // 网格线（装饰）
+  ctx.strokeStyle = 'rgba(255,255,255,0.03)';
+  ctx.lineWidth = 1;
+  for (let x = 0; x < W; x += 36) {
+    ctx.beginPath(); ctx.moveTo(x, 0); ctx.lineTo(x, H); ctx.stroke();
+  }
+  
+  // 绘制网格气泡
+  for (let r = 0; r < ROWS; r++) {
+    for (let c = 0; c < COLS; c++) {
+      if (grid[r] && grid[r][c]) {
+        drawBubble(grid[r][c]);
+      }
+    }
+  }
+  
+  // 飞行中的泡泡
+  if (flyingBubble) {
+    drawBubble(flyingBubble);
+  }
+  
+  // 瞄准线
+  if (state === 'playing' && !flyingBubble) {
+    ctx.save();
+    ctx.strokeStyle = 'rgba(255,255,255,0.2)';
+    ctx.lineWidth = 1;
+    ctx.setLineDash([5, 5]);
+    ctx.beginPath();
+    ctx.moveTo(shooter.x, shooter.y);
+    
+    let px = shooter.x, py = shooter.y;
+    let pvx = Math.cos(shooter.angle) * 14;
+    let pvy = Math.sin(shooter.angle) * 14;
+    
+    for (let i = 0; i < 40; i++) {
+      pvy += 0;
+      px += pvx;
+      py += pvy;
+      if (px < BUBBLE_R || px > W - BUBBLE_R) break;
+      ctx.lineTo(px, py);
+    }
+    ctx.stroke();
+    ctx.restore();
+  }
+  
+  // 发射台
+  ctx.save();
+  
+  // 炮管
+  ctx.translate(shooter.x, shooter.y);
+  ctx.rotate(shooter.angle + Math.PI / 2);
+  
+  const gunGrad = ctx.createLinearGradient(-6, 0, 6, 0);
+  gunGrad.addColorStop(0, '#667eea');
+  gunGrad.addColorStop(1, '#764ba2');
+  ctx.fillStyle = gunGrad;
+  ctx.fillRect(-6, -35, 12, 35);
+  
+  // 当前泡泡（预览）
+  if (shooter.color) {
+    ctx.beginPath();
+    ctx.arc(0, -40, BUBBLE_R, 0, Math.PI * 2);
+    ctx.fillStyle = shooter.color;
+    ctx.fill();
+    ctx.strokeStyle = 'rgba(255,255,255,0.5)';
+    ctx.lineWidth = 2;
+    ctx.stroke();
+  }
+  
+  ctx.restore();
+  
+  // 下一个泡泡（预览）
+  if (nextColor) {
+    ctx.save();
+    ctx.globalAlpha = 0.7;
+    ctx.beginPath();
+    ctx.arc(W - 35, H - 25, BUBBLE_R * 0.7, 0, Math.PI * 2);
+    ctx.fillStyle = nextColor;
+    ctx.fill();
+    ctx.restore();
+    
+    ctx.fillStyle = '#aaa';
+    ctx.font = '11px PingFang SC';
+    ctx.textAlign = 'center';
+    ctx.fillText('下一个', W - 35, H - 8);
+  }
+  
+  // 炸弹显示
+  ctx.fillStyle = '#f5576c';
+  ctx.font = '14px PingFang SC';
+  ctx.textAlign = 'left';
+  ctx.fillText(`💣 ${bombs}`, 10, H - 10);
+  
+  // 射击线（底线）
+  ctx.strokeStyle = 'rgba(255,0,0,0.3)';
+  ctx.lineWidth = 2;
+  ctx.setLineDash([5, 5]);
+  ctx.beginPath();
+  ctx.moveTo(0, H - 90);
+  ctx.lineTo(W, H - 90);
+  ctx.stroke();
+}
+
+function drawBubble(b) {
+  const grad = ctx.createRadialGradient(b.x - b.r * 0.3, b.y - b.r * 0.3, 0, b.x, b.y, b.r);
+  grad.addColorStop(0, lightenColor(b.color, 50));
+  grad.addColorStop(1, b.color);
+  
+  ctx.beginPath();
+  ctx.arc(b.x, b.y, b.r, 0, Math.PI * 2);
+  ctx.fillStyle = grad;
+  ctx.fill();
+  
+  // 高光
+  ctx.fillStyle = 'rgba(255,255,255,0.4)';
+  ctx.beginPath();
+  ctx.arc(b.x - b.r * 0.3, b.y - b.r * 0.35, b.r * 0.25, 0, Math.PI * 2);
+  ctx.fill();
+}
+
+function lightenColor(hex, amount) {
+  const num = parseInt(hex.slice(1), 16);
+  const r = Math.min(255, (num >> 16) + amount);
+  const g = Math.min(255, ((num >> 8) & 0x00FF) + amount);
+  const b = Math.min(255, (num & 0x0000FF) + amount);
+  return `rgb(${r},${g},${b})`;
+}
+
+// ============================================================
+// 主循环
+// ============================================================
+function gameLoop() {
+  if (state === 'playing') {
+    updateFlying();
+  }
+  draw();
+  requestAnimationFrame(gameLoop);
+}
+
+// ============================================================
+// 初始化
+// ============================================================
+document.getElementById('coins').textContent = coins;
+initGrid();
+gameLoop();
+</script>
+</body>
+</html>

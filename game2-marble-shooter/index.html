@@ -1,0 +1,699 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+  <title>弹珠超人</title>
+  <style>
+    * { margin: 0; padding: 0; box-sizing: border-box; }
+    body { background: #0d0d1a; overflow: hidden; touch-action: none; user-select: none; }
+    canvas { display: block; margin: 0 auto; }
+    
+    #ui-overlay {
+      position: fixed; top: 0; left: 0; right: 0;
+      padding: 15px 20px; display: flex;
+      justify-content: space-between; align-items: center;
+      color: white; font-family: 'PingFang SC', sans-serif;
+      z-index: 10; pointer-events: none;
+    }
+    #score-display { font-size: 22px; font-weight: bold; }
+    #level-display { font-size: 16px; color: #aaa; }
+    
+    .screen {
+      position: fixed; top: 0; left: 0; right: 0; bottom: 0;
+      background: rgba(0,0,0,0.88);
+      display: flex; flex-direction: column;
+      align-items: center; justify-content: center;
+      z-index: 100; color: white;
+      font-family: 'PingFang SC', sans-serif;
+    }
+    .screen-title { font-size: 52px; font-weight: bold; margin-bottom: 10px; }
+    .screen-sub { font-size: 18px; color: #aaa; margin-bottom: 30px; }
+    
+    .btn {
+      padding: 14px 48px; font-size: 20px; border: none; border-radius: 50px;
+      cursor: pointer; margin: 8px; font-weight: bold; transition: transform 0.15s;
+    }
+    .btn:active { transform: scale(0.93); }
+    .btn-primary { background: linear-gradient(135deg, #4facfe, #00f2fe); color: #000; }
+    .btn-ad { background: linear-gradient(135deg, #f093fb, #f5576c); color: white; }
+    .btn-ad::before { content: '🎬 '; }
+    
+    .score-big { font-size: 80px; color: #ffd700; font-weight: bold; }
+    .score-best { font-size: 16px; color: #888; margin-top: 8px; }
+    
+    .power-bar-container {
+      width: 200px; height: 20px;
+      background: #333; border-radius: 10px; overflow: hidden;
+      margin: 15px 0;
+    }
+    .power-bar {
+      height: 100%; width: 100%;
+      background: linear-gradient(90deg, #4facfe, #00f2fe);
+      transition: width 0.1s;
+    }
+    
+    #pause-btn {
+      position: fixed; top: 15px; right: 15px;
+      background: rgba(255,255,255,0.15); border: none;
+      color: white; font-size: 20px; padding: 8px 14px;
+      border-radius: 8px; cursor: pointer; z-index: 50;
+      pointer-events: auto;
+    }
+    
+    #aim-line {
+      position: fixed; pointer-events: none; z-index: 5;
+      display: none;
+    }
+    
+    .tip-text { font-size: 13px; color: #666; margin-top: 12px; }
+  </style>
+</head>
+<body>
+
+<canvas id="gameCanvas"></canvas>
+
+<button id="pause-btn">⏸</button>
+
+<div id="ui-overlay">
+  <div>
+    <div id="score-display">🏆 0</div>
+    <div id="level-display">关卡 1</div>
+  </div>
+  <div style="font-size:14px;color:#ffd700;">💰 <span id="coins-display">0</span></div>
+</div>
+
+<div id="menu-screen" class="screen">
+  <div class="screen-title">🎯 弹珠超人</div>
+  <div class="screen-sub">拉满发射，击中全部目标过关！</div>
+  <button class="btn btn-primary" id="start-btn">开始游戏</button>
+  <div class="tip-text">滑动调整角度，点击发射弹珠</div>
+</div>
+
+<div id="win-screen" class="screen" style="display:none;">
+  <div class="screen-title">🎉 过关！</div>
+  <div class="score-big" id="win-score">0</div>
+  <div class="score-best" id="win-best">历史最高: 0</div>
+  <button class="btn btn-primary" id="next-btn">下一关</button>
+  <button class="btn btn-ad" id="win-ad-btn">🎬 看广告拿双倍金币</button>
+</div>
+
+<div id="lose-screen" class="screen" style="display:none;">
+  <div class="screen-title">💀 弹珠用完了</div>
+  <div class="screen-sub">剩余弹珠：<span id="balls-left">0</span></div>
+  <button class="btn btn-ad" id="revive-btn">🎬 看广告复活</button>
+  <button class="btn btn-primary" id="retry-btn">重玩本关</button>
+</div>
+
+<div id="gameover-screen" class="screen" style="display:none;">
+  <div class="screen-title">游戏结束</div>
+  <div class="score-big" id="go-score">0</div>
+  <div class="score-best" id="go-best">历史最高: 0</div>
+  <button class="btn btn-primary" id="restart-btn">再玩一次</button>
+</div>
+
+<script>
+// ============================================================
+// 核心游戏引擎
+// ============================================================
+const canvas = document.getElementById('gameCanvas');
+const ctx = canvas.getContext('2d');
+
+function resize() {
+  canvas.width = Math.min(window.innerWidth, 500);
+  canvas.height = window.innerHeight;
+}
+resize();
+window.addEventListener('resize', resize);
+
+// ============================================================
+// 状态
+// ============================================================
+let state = 'menu'; // menu, playing, win, lose, gameover
+let score = 0;
+let coins = parseInt(localStorage.getItem('marble_coins') || '0');
+let level = 1;
+let ballsLeft = 5;
+let balls = []; // 发射出去的弹珠
+let targets = []; // 目标球
+let aiming = false;
+let aimStart = { x: 0, y: 0 };
+let aimEnd = { x: 0, y: 0 };
+let shooterPos = { x: 0, y: 0 };
+let paused = false;
+let bestScore = parseInt(localStorage.getItem('marble_best') || '0');
+let revived = false;
+
+// ============================================================
+// 关卡配置
+// ============================================================
+const LEVELS = [
+  { targets: 5, rows: 2, spread: 0.6 },
+  { targets: 7, rows: 2, spread: 0.7 },
+  { targets: 9, rows: 3, spread: 0.8 },
+  { targets: 11, rows: 3, spread: 0.9 },
+  { targets: 14, rows: 4, spread: 1.0 },
+  { targets: 17, rows: 4, spread: 1.1 },
+  { targets: 20, rows: 5, spread: 1.2 },
+  { targets: 25, rows: 5, spread: 1.3 },
+];
+
+function getLevelConfig(lvl) {
+  const idx = Math.min(lvl - 1, LEVELS.length - 1);
+  const base = LEVELS[idx];
+  // 后期关卡加更多球
+  const extra = Math.floor((lvl - 1) / 3) * 2;
+  return { ...base, targets: base.targets + extra, balls: 5 + Math.floor((lvl - 1) / 2) };
+}
+
+function loadLevel(lvl) {
+  const cfg = getLevelConfig(lvl);
+  targets = [];
+  balls = [];
+  ballsLeft = cfg.balls;
+  revived = false;
+  
+  // 生成目标球阵列
+  const startX = canvas.width * 0.5;
+  const startY = 100;
+  const spacingX = 40;
+  const spacingY = 40;
+  
+  let count = 0;
+  for (let row = 0; row < cfg.rows && count < cfg.targets; row++) {
+    const itemsInRow = Math.min(cfg.targets - count, Math.floor(cfg.spread * (row + 3)));
+    const rowWidth = (itemsInRow - 1) * spacingX;
+    const rowStartX = startX - rowWidth / 2;
+    
+    for (let col = 0; col < itemsInRow && count < cfg.targets; col++) {
+      const x = rowStartX + col * spacingX + (Math.random() - 0.5) * 10;
+      const y = startY + row * spacingY;
+      const r = 15 + Math.random() * 5;
+      const isBomb = Math.random() < 0.08;
+      
+      // 不同颜色目标
+      const hue = (count * 37 + lvl * 50) % 360;
+      
+      targets.push({
+        x, y, r,
+        vx: 0, vy: 0,
+        color: isBomb ? '#333' : `hsl(${hue},80%,60%)`,
+        bomb: isBomb,
+        hit: false,
+        falling: false,
+        fallVy: 0,
+        id: count
+      });
+      count++;
+    }
+  }
+  
+  shooterPos = { x: canvas.width / 2, y: canvas.height - 80 };
+}
+
+// ============================================================
+// 绘制
+// ============================================================
+function drawBackground() {
+  const grad = ctx.createLinearGradient(0, 0, 0, canvas.height);
+  grad.addColorStop(0, '#1a1a3e');
+  grad.addColorStop(1, '#0d0d1a');
+  ctx.fillStyle = grad;
+  ctx.fillRect(0, 0, canvas.width, canvas.height);
+  
+  // 网格
+  ctx.strokeStyle = 'rgba(255,255,255,0.04)';
+  ctx.lineWidth = 1;
+  for (let x = 0; x < canvas.width; x += 40) {
+    ctx.beginPath(); ctx.moveTo(x, 0); ctx.lineTo(x, canvas.height); ctx.stroke();
+  }
+  for (let y = 0; y < canvas.height; y += 40) {
+    ctx.beginPath(); ctx.moveTo(0, y); ctx.lineTo(canvas.width, y); ctx.stroke();
+  }
+}
+
+function drawTargets() {
+  targets.forEach(t => {
+    if (t.hit) return;
+    
+    ctx.save();
+    
+    if (t.falling) {
+      t.y += t.fallVy;
+      t.fallVy += 0.5;
+      ctx.globalAlpha = Math.max(0, 1 - (t.y - canvas.height) / 200);
+    }
+    
+    const grad = ctx.createRadialGradient(t.x - t.r*0.3, t.y - t.r*0.3, 0, t.x, t.y, t.r);
+    grad.addColorStop(0, t.bomb ? '#555' : lightenColor(t.color, 40));
+    grad.addColorStop(1, t.bomb ? '#111' : t.color);
+    
+    ctx.beginPath();
+    ctx.arc(t.x, t.y, t.r, 0, Math.PI * 2);
+    ctx.fillStyle = grad;
+    ctx.fill();
+    
+    if (t.bomb) {
+      ctx.strokeStyle = '#f00';
+      ctx.lineWidth = 2;
+      ctx.beginPath();
+      ctx.arc(t.x, t.y, t.r * 0.5, 0, Math.PI * 2);
+      ctx.stroke();
+      // 骷髅
+      ctx.fillStyle = '#f00';
+      ctx.font = `${t.r}px Arial`;
+      ctx.textAlign = 'center';
+      ctx.textBaseline = 'middle';
+      ctx.fillText('💀', t.x, t.y);
+    } else {
+      // 高光
+      ctx.fillStyle = 'rgba(255,255,255,0.4)';
+      ctx.beginPath();
+      ctx.arc(t.x - t.r*0.3, t.y - t.r*0.3, t.r*0.25, 0, Math.PI*2);
+      ctx.fill();
+    }
+    
+    ctx.restore();
+  });
+}
+
+function drawBalls() {
+  balls.forEach(b => {
+    const grad = ctx.createRadialGradient(b.x - b.r*0.3, b.y - b.r*0.3, 0, b.x, b.y, b.r);
+    grad.addColorStop(0, '#fff');
+    grad.addColorStop(1, '#4facfe');
+    
+    ctx.beginPath();
+    ctx.arc(b.x, b.y, b.r, 0, Math.PI * 2);
+    ctx.fillStyle = grad;
+    ctx.fill();
+    ctx.strokeStyle = '#00f2fe';
+    ctx.lineWidth = 2;
+    ctx.stroke();
+  });
+}
+
+function drawShooter() {
+  const { x, y } = shooterPos;
+  
+  // 底座
+  ctx.fillStyle = '#333';
+  ctx.beginPath();
+  ctx.ellipse(x, y + 15, 30, 10, 0, 0, Math.PI * 2);
+  ctx.fill();
+  
+  // 炮管（指向瞄准方向）
+  let angle = -Math.PI / 2;
+  if (aiming && aimEnd) {
+    const dx = aimEnd.x - x;
+    const dy = aimEnd.y - y;
+    angle = Math.atan2(dy, dx);
+    angle = Math.max(-Math.PI + 0.2, Math.min(-0.2, angle));
+  }
+  
+  ctx.save();
+  ctx.translate(x, y);
+  ctx.rotate(angle + Math.PI / 2);
+  
+  const grad = ctx.createLinearGradient(-8, 0, 8, 0);
+  grad.addColorStop(0, '#4facfe');
+  grad.addColorStop(1, '#00f2fe');
+  ctx.fillStyle = grad;
+  ctx.fillRect(-8, -35, 16, 35);
+  
+  ctx.fillStyle = '#4facfe';
+  ctx.beginPath();
+  ctx.ellipse(0, -35, 10, 6, 0, 0, Math.PI * 2);
+  ctx.fill();
+  
+  ctx.restore();
+}
+
+function drawAimLine() {
+  if (!aiming) return;
+  
+  const { x, y } = shooterPos;
+  const dx = aimEnd.x - aimStart.x;
+  const dy = aimEnd.y - aimStart.y;
+  
+  // 发射方向（相反方向）
+  const angle = Math.atan2(dy, dx);
+  const fixedAngle = Math.max(-Math.PI + 0.2, Math.min(-0.2, angle));
+  
+  const power = Math.min(Math.sqrt(dx*dx + dy*dy), 150);
+  const vx = Math.cos(fixedAngle) * power * 0.15;
+  const vy = Math.sin(fixedAngle) * power * 0.15;
+  
+  // 预测轨迹
+  ctx.save();
+  ctx.strokeStyle = 'rgba(79, 172, 254, 0.6)';
+  ctx.lineWidth = 2;
+  ctx.setLineDash([8, 8]);
+  ctx.beginPath();
+  ctx.moveTo(x, y);
+  
+  let px = x, py = y, pvx = vx, pvy = vy;
+  for (let i = 0; i < 40; i++) {
+    pvx *= 0.99;
+    pvy += 0.4;
+    px += pvx;
+    py += pvy;
+    if (py > canvas.height) break;
+    ctx.lineTo(px, py);
+  }
+  ctx.stroke();
+  
+  // 力度条
+  const powerPct = power / 150;
+  const barW = 150;
+  const barH = 8;
+  const barX = x - barW / 2;
+  const barY = y - 60;
+  
+  ctx.setLineDash([]);
+  ctx.fillStyle = '#222';
+  ctx.fillRect(barX, barY, barW, barH);
+  
+  const powerGrad = ctx.createLinearGradient(barX, barY, barX + barW * powerPct, barY);
+  powerGrad.addColorStop(0, '#4facfe');
+  powerGrad.addColorStop(1, '#f5576c');
+  ctx.fillStyle = powerGrad;
+  ctx.fillRect(barX, barY, barW * powerPct, barH);
+  
+  ctx.restore();
+}
+
+function drawBallsLeft() {
+  const startX = 20;
+  const y = canvas.height - 30;
+  
+  for (let i = 0; i < ballsLeft; i++) {
+    ctx.beginPath();
+    ctx.arc(startX + i * 22, y, 8, 0, Math.PI * 2);
+    ctx.fillStyle = '#4facfe';
+    ctx.fill();
+    ctx.strokeStyle = '#fff';
+    ctx.lineWidth = 1.5;
+    ctx.stroke();
+  }
+}
+
+// ============================================================
+// 逻辑
+// ============================================================
+function lightenColor(color, amount) {
+  if (color.startsWith('hsl')) {
+    const match = color.match(/hsl\((\d+),(\d+)%,(\d+)%\)/);
+    if (match) {
+      return `hsl(${match[1]},${match[2]}%,${Math.min(100, parseInt(match[3]) + amount)}%)`;
+    }
+  }
+  return color;
+}
+
+function shoot() {
+  if (ballsLeft <= 0 || aiming === false) return;
+  
+  const dx = aimEnd.x - aimStart.x;
+  const dy = aimEnd.y - aimStart.y;
+  const power = Math.min(Math.sqrt(dx*dx + dy*dy), 150);
+  
+  const angle = Math.atan2(dy, dx);
+  const fixedAngle = Math.max(-Math.PI + 0.2, Math.min(-0.2, angle));
+  
+  const vx = Math.cos(fixedAngle) * power * 0.15;
+  const vy = Math.sin(fixedAngle) * power * 0.15;
+  
+  balls.push({
+    x: shooterPos.x,
+    y: shooterPos.y,
+    vx, vy,
+    r: 10,
+    trail: []
+  });
+  
+  ballsLeft--;
+  aiming = false;
+}
+
+function updateBalls() {
+  balls.forEach(b => {
+    b.trail.push({ x: b.x, y: b.y });
+    if (b.trail.length > 10) b.trail.shift();
+    
+    b.vy += 0.35; // 重力
+    b.vx *= 0.995;
+    b.x += b.vx;
+    b.y += b.vy;
+    
+    // 边界反弹
+    if (b.x - b.r < 0) { b.x = b.r; b.vx *= -0.8; }
+    if (b.x + b.r > canvas.width) { b.x = canvas.width - b.r; b.vx *= -0.8; }
+    if (b.y - b.r < 0) { b.y = b.r; b.vy *= -0.8; }
+    
+    // 检测与目标碰撞
+    targets.forEach(t => {
+      if (t.hit || t.falling) return;
+      const dx = b.x - t.x;
+      const dy = b.y - t.y;
+      const dist = Math.sqrt(dx*dx + dy*dy);
+      
+      if (dist < b.r + t.r) {
+        t.hit = true;
+        
+        if (t.bomb) {
+          // 炸弹：消灭周围目标
+          targets.forEach(t2 => {
+            if (!t2.hit && !t2.bomb) {
+              const d2 = Math.sqrt((t2.x-t.x)**2 + (t2.y-t.y)**2);
+              if (d2 < t.r * 4) {
+                t2.falling = true;
+                t2.fallVy = -3;
+                score += 5;
+              }
+            }
+          });
+          score += 20;
+        } else {
+          // 反弹方向
+          const nx = dx / dist;
+          const ny = dy / dist;
+          const dot = b.vx * nx + b.vy * ny;
+          b.vx -= 2 * dot * nx * 0.7;
+          b.vy -= 2 * dot * ny * 0.7;
+          score += 10;
+        }
+      }
+    });
+  });
+  
+  // 下落的目标
+  targets.forEach(t => {
+    if (t.falling && !t.hit) {
+      // 继续下落逻辑在drawTargets里
+      if (t.y > canvas.height + 50) {
+        t.hit = true;
+      }
+    }
+  });
+  
+  // 移除出界弹珠
+  balls = balls.filter(b => b.y < canvas.height + 100);
+  
+  // 更新分数显示
+  document.getElementById('score-display').textContent = '🏆 ' + score;
+}
+
+function checkWinLose() {
+  if (state !== 'playing' || paused) return;
+  
+  const allHit = targets.every(t => t.hit || t.falling);
+  const noBalls = balls.length === 0;
+  
+  if (allHit && noBalls) {
+    // 过关！
+    state = 'win';
+    const earned = level * 20;
+    coins += earned;
+    saveState();
+    
+    document.getElementById('win-score').textContent = '💰 +' + earned;
+    document.getElementById('win-best').textContent = '历史最高: ' + bestScore;
+    document.getElementById('win-screen').style.display = 'flex';
+    document.getElementById('ui-overlay').style.display = 'none';
+    return;
+  }
+  
+  if (ballsLeft <= 0 && noBalls) {
+    // 检查是否还有可打的球
+    const remaining = targets.filter(t => !t.hit && !t.bomb);
+    if (remaining.length > 0) {
+      if (!revived) {
+        state = 'lose';
+        document.getElementById('balls-left').textContent = remaining.length;
+        document.getElementById('lose-screen').style.display = 'flex';
+        document.getElementById('ui-overlay').style.display = 'none';
+      } else {
+        // 真输了
+        state = 'gameover';
+        if (score > bestScore) {
+          bestScore = score;
+          localStorage.setItem('marble_best', bestScore);
+        }
+        document.getElementById('go-score').textContent = score;
+        document.getElementById('go-best').textContent = '历史最高: ' + bestScore;
+        document.getElementById('gameover-screen').style.display = 'flex';
+        document.getElementById('ui-overlay').style.display = 'none';
+      }
+    }
+  }
+}
+
+// ============================================================
+// 主循环
+// ============================================================
+function gameLoop() {
+  if (state === 'playing' && !paused) {
+    drawBackground();
+    drawTargets();
+    drawBalls();
+    drawShooter();
+    if (aiming) drawAimLine();
+    drawBallsLeft();
+    updateBalls();
+    checkWinLose();
+  }
+  
+  requestAnimationFrame(gameLoop);
+}
+
+// ============================================================
+// 广告模拟
+// ============================================================
+function showAd(callback) {
+  const overlay = document.createElement('div');
+  overlay.style = 'position:fixed;top:0;left:0;right:0;bottom:0;background:#000;display:flex;align-items:center;justify-content:center;z-index:999;flex-direction:column;color:white;font-family:PingFang SC,sans-serif;';
+  overlay.innerHTML = '<div style="font-size:56px;margin-bottom:20px;">🎬</div><div style="font-size:24px;">广告播放中...</div><div style="margin-top:15px;font-size:14px;color:#666;">（模拟）</div>';
+  document.body.appendChild(overlay);
+  setTimeout(() => {
+    overlay.remove();
+    if (callback) callback();
+  }, 2000);
+}
+
+// ============================================================
+// 存档
+// ============================================================
+function saveState() {
+  localStorage.setItem('marble_coins', coins);
+  document.getElementById('coins-display').textContent = coins;
+}
+
+// ============================================================
+// 输入
+// ============================================================
+function getEventPos(e) {
+  if (e.touches) {
+    return { x: e.touches[0].clientX, y: e.touches[0].clientY };
+  }
+  return { x: e.clientX, y: e.clientY };
+}
+
+canvas.addEventListener('mousedown', onPointerDown);
+canvas.addEventListener('mousemove', onPointerMove);
+canvas.addEventListener('mouseup', onPointerUp);
+canvas.addEventListener('touchstart', e => { e.preventDefault(); onPointerDown(e); }, { passive: false });
+canvas.addEventListener('touchmove', e => { e.preventDefault(); onPointerMove(e); }, { passive: false });
+canvas.addEventListener('touchend', e => { e.preventDefault(); onPointerUp(e); }, { passive: false });
+
+function onPointerDown(e) {
+  if (state !== 'playing' || paused) return;
+  const pos = getEventPos(e);
+  aiming = true;
+  aimStart = { x: shooterPos.x, y: shooterPos.y };
+  aimEnd = { x: pos.x, y: pos.y };
+}
+
+function onPointerMove(e) {
+  if (!aiming) return;
+  const pos = getEventPos(e);
+  aimEnd = { x: pos.x, y: pos.y };
+}
+
+function onPointerUp(e) {
+  if (!aiming) return;
+  shoot();
+}
+
+// ============================================================
+// UI 事件
+// ============================================================
+document.getElementById('start-btn').addEventListener('click', () => {
+  state = 'playing';
+  score = 0;
+  level = 1;
+  loadLevel(level);
+  document.getElementById('menu-screen').style.display = 'none';
+  document.getElementById('ui-overlay').style.display = 'flex';
+  document.getElementById('level-display').textContent = '关卡 ' + level;
+});
+
+document.getElementById('next-btn').addEventListener('click', () => {
+  level++;
+  loadLevel(level);
+  state = 'playing';
+  document.getElementById('win-screen').style.display = 'none';
+  document.getElementById('ui-overlay').style.display = 'flex';
+  document.getElementById('level-display').textContent = '关卡 ' + level;
+});
+
+document.getElementById('retry-btn').addEventListener('click', () => {
+  loadLevel(level);
+  state = 'playing';
+  document.getElementById('lose-screen').style.display = 'none';
+  document.getElementById('ui-overlay').style.display = 'flex';
+});
+
+document.getElementById('revive-btn').addEventListener('click', () => {
+  showAd(() => {
+    revived = true;
+    ballsLeft = 3;
+    balls = [];
+    state = 'playing';
+    document.getElementById('lose-screen').style.display = 'none';
+    document.getElementById('ui-overlay').style.display = 'flex';
+  });
+});
+
+document.getElementById('win-ad-btn').addEventListener('click', () => {
+  showAd(() => {
+    coins += level * 20;
+    saveState();
+    document.getElementById('win-ad-btn').textContent = '已双倍！';
+    document.getElementById('win-ad-btn').disabled = true;
+  });
+});
+
+document.getElementById('restart-btn').addEventListener('click', () => {
+  score = 0;
+  level = 1;
+  loadLevel(level);
+  state = 'playing';
+  document.getElementById('gameover-screen').style.display = 'none';
+  document.getElementById('ui-overlay').style.display = 'flex';
+  document.getElementById('level-display').textContent = '关卡 ' + level;
+});
+
+document.getElementById('pause-btn').addEventListener('click', () => {
+  if (state !== 'playing') return;
+  paused = !paused;
+  document.getElementById('pause-btn').textContent = paused ? '▶' : '⏸';
+});
+
+// 初始化
+document.getElementById('ui-overlay').style.display = 'none';
+document.getElementById('coins-display').textContent = coins;
+gameLoop();
+</script>
+</body>
+</html>

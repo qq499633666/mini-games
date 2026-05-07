@@ -1,0 +1,637 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+  <title>跳跳侠 - 微信抖音小游戏</title>
+  <style>
+    * { margin: 0; padding: 0; box-sizing: border-box; }
+    body { background: #1a1a2e; overflow: hidden; touch-action: none; }
+    canvas { display: block; margin: 0 auto; }
+    
+    #ui-overlay {
+      position: fixed; top: 0; left: 0; right: 0;
+      padding: 15px; display: flex;
+      justify-content: space-between; align-items: center;
+      color: white; font-family: 'PingFang SC', sans-serif;
+      z-index: 10; pointer-events: none;
+    }
+    #score-display { font-size: 24px; font-weight: bold; text-shadow: 0 2px 4px rgba(0,0,0,0.5); }
+    #coin-display { font-size: 18px; color: #ffd700; }
+    
+    #start-screen, #gameover-screen, #revive-screen {
+      position: fixed; top: 0; left: 0; right: 0; bottom: 0;
+      background: rgba(0,0,0,0.85);
+      display: flex; flex-direction: column;
+      align-items: center; justify-content: center;
+      z-index: 100; color: white;
+      font-family: 'PingFang SC', sans-serif;
+    }
+    #gameover-screen, #revive-screen, #start-screen { display: none; }
+    
+    .screen-title { font-size: 48px; font-weight: bold; margin-bottom: 20px; }
+    .screen-subtitle { font-size: 20px; color: #aaa; margin-bottom: 40px; }
+    
+    .btn {
+      padding: 15px 50px; font-size: 20px; border: none; border-radius: 50px;
+      cursor: pointer; margin: 10px; font-weight: bold; transition: transform 0.2s;
+    }
+    .btn:active { transform: scale(0.95); }
+    .btn-primary { background: linear-gradient(135deg, #667eea, #764ba2); color: white; }
+    .btn-ad { background: linear-gradient(135deg, #f093fb, #f5576c); color: white; }
+    .btn-ad::before { content: '🎬 '; }
+    
+    #revive-screen .screen-title { color: #f5576c; }
+    #gameover-screen .final-score { font-size: 72px; color: #ffd700; font-weight: bold; }
+    #gameover-screen .best-score { font-size: 18px; color: #aaa; margin-top: 10px; }
+    
+    #ad-notice {
+      font-size: 14px; color: #888; margin-top: 15px;
+      text-align: center; max-width: 280px;
+    }
+    
+    .character-select {
+      display: flex; gap: 20px; margin: 20px 0;
+    }
+    .char-option {
+      width: 80px; height: 80px; border-radius: 50%;
+      border: 3px solid transparent; cursor: pointer;
+      display: flex; align-items: center; justify-content: center;
+      font-size: 40px; transition: all 0.2s;
+    }
+    .char-option.selected { border-color: #667eea; transform: scale(1.1); }
+    .char-option.locked { opacity: 0.5; }
+    .char-option.unlocked { background: linear-gradient(135deg, #667eea, #764ba2); }
+  </style>
+</head>
+<body>
+
+<canvas id="gameCanvas"></canvas>
+
+<div id="ui-overlay">
+  <div id="score-display">🏆 0</div>
+  <div id="coin-display">💰 0</div>
+</div>
+
+<div id="start-screen">
+  <div class="screen-title">🎮 跳跳侠</div>
+  <div class="screen-subtitle">点击屏幕跳跃，躲避障碍物</div>
+  <div class="character-select" id="char-select"></div>
+  <button class="btn btn-primary" id="start-btn">开始游戏</button>
+  <div id="ad-notice">观看广告可解锁新角色</div>
+</div>
+
+<div id="revive-screen">
+  <div class="screen-title">💀 游戏结束</div>
+  <div class="screen-subtitle">看广告立即复活！</div>
+  <button class="btn btn-ad" id="revive-btn">看广告复活</button>
+  <button class="btn btn-primary" id="revive-skip-btn">算了</button>
+  <div id="ad-notice">复活后保留当前分数，继续挑战！</div>
+</div>
+
+<div id="gameover-screen">
+  <div class="screen-title">游戏结束</div>
+  <div class="final-score" id="final-score">0</div>
+  <div class="best-score" id="best-score">历史最高: 0</div>
+  <button class="btn btn-primary" id="restart-btn">再玩一次</button>
+  <button class="btn btn-ad" id="share-btn">🎬 看广告双倍金币</button>
+  <div id="ad-notice">分享到群可获得额外金币</div>
+</div>
+
+<script>
+// ============================================================
+// 核心游戏引擎
+// ============================================================
+const canvas = document.getElementById('gameCanvas');
+const ctx = canvas.getContext('2d');
+
+// 自适应尺寸
+function resizeCanvas() {
+  canvas.width = Math.min(window.innerWidth, 500);
+  canvas.height = window.innerHeight;
+}
+resizeCanvas();
+window.addEventListener('resize', resizeCanvas);
+
+// ============================================================
+// 游戏状态
+// ============================================================
+const GAME_STATE = {
+  MENU: 'menu',
+  PLAYING: 'playing',
+  DEAD: 'dead',
+  REVIVE: 'revive',
+  GAMEOVER: 'gameover'
+};
+
+let state = GAME_STATE.MENU;
+let score = 0;
+let coins = 0;
+let bestScore = parseInt(localStorage.getItem('jumpGame_best') || '0');
+let characters = [
+  { id: 0, emoji: '🧑', name: '默认', unlocked: true, price: 0 },
+  { id: 1, emoji: '🦸', name: '超人', unlocked: false, price: 100 },
+  { id: 2, emoji: '🤖', name: '机器人', unlocked: false, price: 200 },
+  { id: 3, emoji: '👾', name: '外星人', unlocked: false, price: 300 },
+  { id: 4, emoji: '🦊', name: '狐狸', unlocked: false, price: 500 },
+];
+let selectedChar = 0;
+let revived = false; // 本局是否已复活过
+
+// 加载存档
+function loadSave() {
+  try {
+    const saved = JSON.parse(localStorage.getItem('jumpGame_save') || '{}');
+    coins = saved.coins || 0;
+    characters.forEach((c, i) => {
+      if (saved.unlocked && saved.unlocked.includes(i)) c.unlocked = true;
+    });
+    selectedChar = saved.selectedChar || 0;
+  } catch(e) {}
+}
+function saveSave() {
+  localStorage.setItem('jumpGame_save', JSON.stringify({
+    coins,
+    unlocked: characters.filter(c => c.unlocked && c.id > 0).map(c => c.id),
+    selectedChar
+  }));
+}
+
+loadSave();
+updateCoinDisplay();
+
+// ============================================================
+// 广告模拟（真实项目中替换为平台SDK）
+// ============================================================
+function showRewardedAd(callback) {
+  // 模拟广告：显示2秒后回调
+  const overlay = document.createElement('div');
+  overlay.style = 'position:fixed;top:0;left:0;right:0;bottom:0;background:#000;display:flex;align-items:center;justify-content:center;z-index:999;flex-direction:column;color:white;font-family:PingFang SC,sans-serif;';
+  overlay.innerHTML = '<div style="font-size:48px;margin-bottom:20px;">🎬</div><div style="font-size:24px;">广告播放中...</div><div style="margin-top:15px;font-size:16px;color:#888;">（模拟）</div>';
+  document.body.appendChild(overlay);
+  
+  setTimeout(() => {
+    overlay.remove();
+    if (callback) callback(true);
+  }, 2000);
+}
+
+// ============================================================
+// 角色绘制
+// ============================================================
+function drawCharacter(x, y, size, emoji) {
+  ctx.save();
+  ctx.translate(x, y);
+  
+  // 身体（圆形）
+  const gradient = ctx.createRadialGradient(0, 0, 0, 0, 0, size/2);
+  gradient.addColorStop(0, '#fff');
+  gradient.addColorStop(1, '#ddd');
+  ctx.beginPath();
+  ctx.arc(0, 0, size/2, 0, Math.PI * 2);
+  ctx.fillStyle = gradient;
+  ctx.fill();
+  ctx.strokeStyle = '#667eea';
+  ctx.lineWidth = 3;
+  ctx.stroke();
+  
+  // 眼睛
+  ctx.fillStyle = '#333';
+  ctx.beginPath();
+  ctx.arc(-size*0.15, -size*0.05, size*0.08, 0, Math.PI*2);
+  ctx.arc(size*0.15, -size*0.05, size*0.08, 0, Math.PI*2);
+  ctx.fill();
+  
+  ctx.restore();
+  
+  // emoji渲染（覆盖在圆形上）
+  ctx.font = `${size * 0.8}px Arial`;
+  ctx.textAlign = 'center';
+  ctx.textBaseline = 'middle';
+  ctx.fillText(emoji, x, y + size*0.05);
+}
+
+// ============================================================
+// 玩家
+// ============================================================
+const player = {
+  x: 80,
+  y: 0,
+  w: 40,
+  h: 50,
+  vy: 0,
+  grounded: false,
+  jumpPower: -15,
+  gravity: 0.6,
+  groundY: 0,
+  
+  reset() {
+    this.y = this.groundY - this.h;
+    this.vy = 0;
+    this.grounded = true;
+  },
+  
+  jump() {
+    if (this.grounded) {
+      this.vy = this.jumpPower;
+      this.grounded = false;
+    }
+  },
+  
+  update() {
+    this.vy += this.gravity;
+    this.y += this.vy;
+    
+    const ground = canvas.height - 80;
+    if (this.y + this.h > ground) {
+      this.y = ground - this.h;
+      this.vy = 0;
+      this.grounded = true;
+    }
+  },
+  
+  draw() {
+    const char = characters[selectedChar];
+    drawCharacter(this.x + this.w/2, this.y + this.h/2, this.h * 0.9, char.emoji);
+  }
+};
+
+// ============================================================
+// 障碍物
+// ============================================================
+let obstacles = [];
+let obstacleTimer = 0;
+const OBSTACLE_INTERVAL = 80;
+
+function spawnObstacle() {
+  const types = ['spike', 'block', 'double'];
+  const type = types[Math.floor(Math.random() * types.length)];
+  
+  if (type === 'spike') {
+    obstacles.push({
+      type: 'spike',
+      x: canvas.width,
+      y: canvas.height - 80,
+      w: 30,
+      h: 50,
+      color: '#e74c3c'
+    });
+  } else if (type === 'block') {
+    obstacles.push({
+      type: 'block',
+      x: canvas.width,
+      y: canvas.height - 80 - 40 - Math.random() * 60,
+      w: 40,
+      h: 40 + Math.random() * 60,
+      color: '#9b59b6'
+    });
+  } else {
+    obstacles.push({
+      type: 'spike',
+      x: canvas.width,
+      y: canvas.height - 80,
+      w: 30,
+      h: 50,
+      color: '#e74c3c'
+    });
+    obstacles.push({
+      type: 'block',
+      x: canvas.width + 60,
+      y: canvas.height - 80 - 30,
+      w: 40,
+      h: 30,
+      color: '#9b59b6'
+    });
+  }
+}
+
+function updateObstacles() {
+  const speed = 6 + Math.min(score / 100, 5); // 随分数加速
+  
+  obstacleTimer++;
+  if (obstacleTimer >= OBSTACLE_INTERVAL - Math.min(score/20, 40)) {
+    spawnObstacle();
+    obstacleTimer = 0;
+  }
+  
+  obstacles.forEach(obs => {
+    obs.x -= speed;
+  });
+  
+  obstacles = obstacles.filter(obs => obs.x + obs.w > 0);
+}
+
+function drawObstacles() {
+  obstacles.forEach(obs => {
+    if (obs.type === 'spike') {
+      // 三角形钉子
+      ctx.fillStyle = obs.color;
+      ctx.beginPath();
+      ctx.moveTo(obs.x + obs.w/2, obs.y);
+      ctx.lineTo(obs.x + obs.w, obs.y + obs.h);
+      ctx.lineTo(obs.x, obs.y + obs.h);
+      ctx.closePath();
+      ctx.fill();
+      
+      // 高光
+      ctx.fillStyle = 'rgba(255,255,255,0.3)';
+      ctx.beginPath();
+      ctx.moveTo(obs.x + obs.w/2, obs.y + 5);
+      ctx.lineTo(obs.x + obs.w*0.7, obs.y + obs.h * 0.6);
+      ctx.lineTo(obs.x + obs.w/2, obs.y + obs.h * 0.6);
+      ctx.closePath();
+      ctx.fill();
+    } else {
+      // 方块
+      const grad = ctx.createLinearGradient(obs.x, obs.y, obs.x, obs.y + obs.h);
+      grad.addColorStop(0, obs.color);
+      grad.addColorStop(1, '#2c3e50');
+      ctx.fillStyle = grad;
+      ctx.fillRect(obs.x, obs.y, obs.w, obs.h);
+      
+      // 边框
+      ctx.strokeStyle = '#fff';
+      ctx.lineWidth = 2;
+      ctx.strokeRect(obs.x, obs.y, obs.w, obs.h);
+    }
+  });
+}
+
+// ============================================================
+// 地面和背景
+// ============================================================
+let groundOffset = 0;
+
+function drawBackground() {
+  // 渐变背景
+  const grad = ctx.createLinearGradient(0, 0, 0, canvas.height);
+  grad.addColorStop(0, '#0f0c29');
+  grad.addColorStop(0.5, '#302b63');
+  grad.addColorStop(1, '#24243e');
+  ctx.fillStyle = grad;
+  ctx.fillRect(0, 0, canvas.width, canvas.height);
+  
+  // 星星
+  ctx.fillStyle = 'rgba(255,255,255,0.5)';
+  for (let i = 0; i < 50; i++) {
+    const sx = (i * 73 + groundOffset * 0.1) % canvas.width;
+    const sy = (i * 47) % (canvas.height * 0.6);
+    ctx.beginPath();
+    ctx.arc(sx, sy, 1, 0, Math.PI * 2);
+    ctx.fill();
+  }
+  
+  // 地面
+  const groundY = canvas.height - 80;
+  const groundGrad = ctx.createLinearGradient(0, groundY, 0, canvas.height);
+  groundGrad.addColorStop(0, '#27ae60');
+  groundGrad.addColorStop(1, '#1e8449');
+  ctx.fillStyle = groundGrad;
+  ctx.fillRect(0, groundY, canvas.width, 80);
+  
+  // 地面纹理线
+  ctx.strokeStyle = 'rgba(255,255,255,0.2)';
+  ctx.lineWidth = 2;
+  for (let i = 0; i < canvas.width / 20 + 2; i++) {
+    const lx = (i * 50 - groundOffset % 50);
+    ctx.beginPath();
+    ctx.moveTo(lx, groundY);
+    ctx.lineTo(lx + 15, canvas.height);
+    ctx.stroke();
+  }
+  
+  // 地面分隔线
+  ctx.fillStyle = '#ffd700';
+  ctx.fillRect(0, groundY, canvas.width, 4);
+}
+
+function updateGround() {
+  groundOffset += 6 + Math.min(score / 100, 5);
+}
+
+// ============================================================
+// 碰撞检测
+// ============================================================
+function checkCollision() {
+  const px = player.x, py = player.y, pw = player.w, ph = player.h;
+  
+  for (const obs of obstacles) {
+    if (obs.type === 'spike') {
+      // 三角形碰撞（简化）
+      const cx = obs.x + obs.w/2;
+      const cy = obs.y + obs.h * 0.3;
+      const r = obs.w * 0.4;
+      const dx = (px + pw/2) - cx;
+      const dy = (py + ph/2) - cy;
+      if (Math.sqrt(dx*dx + dy*dy) < r + pw/3) {
+        return true;
+      }
+    } else {
+      // 矩形碰撞
+      if (px < obs.x + obs.w && px + pw > obs.x &&
+          py < obs.y + obs.h && py + ph > obs.y) {
+        return true;
+      }
+    }
+  }
+  return false;
+}
+
+// ============================================================
+// 分数和金币
+// ============================================================
+function updateScore() {
+  const ground = canvas.height - 80;
+  score = Math.floor((ground - player.y) / 5) + obstacles.length * 10;
+  score = Math.max(0, score);
+  document.getElementById('score-display').textContent = '🏆 ' + score;
+}
+
+function updateCoinDisplay() {
+  document.getElementById('coin-display').textContent = '💰 ' + coins;
+}
+
+function earnCoins(amount) {
+  coins += amount;
+  updateCoinDisplay();
+  saveSave();
+}
+
+// ============================================================
+// 游戏流程
+// ============================================================
+function startGame() {
+  state = GAME_STATE.PLAYING;
+  score = 0;
+  obstacles = [];
+  obstacleTimer = 0;
+  groundOffset = 0;
+  revived = false;
+  
+  player.groundY = canvas.height - 80;
+  player.reset();
+  
+  document.getElementById('start-screen').style.display = 'none';
+  document.getElementById('gameover-screen').style.display = 'none';
+  document.getElementById('revive-screen').style.display = 'none';
+  document.getElementById('ui-overlay').style.display = 'flex';
+}
+
+function gameOver() {
+  if (state !== GAME_STATE.PLAYING) return;
+  state = GAME_STATE.DEAD;
+  
+  if (!revived) {
+    // 可以复活
+    state = GAME_STATE.REVIVE;
+    document.getElementById('revive-screen').style.display = 'flex';
+    document.getElementById('ui-overlay').style.display = 'none';
+  } else {
+    // 直接结束
+    endGame();
+  }
+}
+
+function reviveWithAd() {
+  showRewardedAd((success) => {
+    if (success) {
+      revived = true;
+      player.reset();
+      state = GAME_STATE.PLAYING;
+      document.getElementById('revive-screen').style.display = 'none';
+      document.getElementById('ui-overlay').style.display = 'flex';
+    }
+  });
+}
+
+function endGame() {
+  state = GAME_STATE.GAMEOVER;
+  
+  // 结算金币
+  const earnedCoins = Math.floor(score / 10);
+  earnCoins(earnedCoins);
+  
+  if (score > bestScore) {
+    bestScore = score;
+    localStorage.setItem('jumpGame_best', bestScore);
+  }
+  
+  document.getElementById('final-score').textContent = score;
+  document.getElementById('best-score').textContent = '历史最高: ' + bestScore;
+  document.getElementById('gameover-screen').style.display = 'flex';
+  document.getElementById('ui-overlay').style.display = 'none';
+}
+
+// ============================================================
+// 主循环
+// ============================================================
+function gameLoop() {
+  if (state === GAME_STATE.PLAYING) {
+    drawBackground();
+    updateGround();
+    updateObstacles();
+    player.update();
+    player.draw();
+    drawObstacles();
+    updateScore();
+    
+    if (checkCollision()) {
+      gameOver();
+    }
+  }
+  
+  requestAnimationFrame(gameLoop);
+}
+
+// ============================================================
+// 输入处理
+// ============================================================
+canvas.addEventListener('touchstart', (e) => {
+  e.preventDefault();
+  if (state === GAME_STATE.PLAYING) {
+    player.jump();
+  }
+});
+
+canvas.addEventListener('mousedown', (e) => {
+  if (state === GAME_STATE.PLAYING) {
+    player.jump();
+  }
+});
+
+document.addEventListener('keydown', (e) => {
+  if (e.code === 'Space' && state === GAME_STATE.PLAYING) {
+    e.preventDefault();
+    player.jump();
+  }
+});
+
+// ============================================================
+// UI 事件绑定
+// ============================================================
+document.getElementById('start-btn').addEventListener('click', startGame);
+document.getElementById('restart-btn').addEventListener('click', startGame);
+document.getElementById('revive-btn').addEventListener('click', reviveWithAd);
+document.getElementById('revive-skip-btn').addEventListener('click', () => {
+  document.getElementById('revive-screen').style.display = 'none';
+  endGame();
+});
+document.getElementById('share-btn').addEventListener('click', () => {
+  // 看广告双倍金币
+  showRewardedAd((success) => {
+    if (success) {
+      earnCoins(Math.floor(score / 10)); // 再加一份
+      document.getElementById('share-btn').textContent = '已双倍！';
+      document.getElementById('share-btn').disabled = true;
+    }
+  });
+});
+
+// 角色选择
+function renderCharSelect() {
+  const container = document.getElementById('char-select');
+  container.innerHTML = '';
+  
+  characters.forEach((c, i) => {
+    const el = document.createElement('div');
+    el.className = 'char-option' + (c.unlocked ? ' unlocked' : ' locked') + (selectedChar === i ? ' selected' : '');
+    el.textContent = c.emoji;
+    el.title = c.unlocked ? c.name : `${c.name} (${c.price}金币)`;
+    
+    el.addEventListener('click', () => {
+      if (!c.unlocked) {
+        // 看广告解锁
+        showRewardedAd((ok) => {
+          if (ok && coins >= c.price) {
+            coins -= c.price;
+            c.unlocked = true;
+            selectedChar = c.id;
+            updateCoinDisplay();
+            saveSave();
+            renderCharSelect();
+          } else if (ok) {
+            alert('金币不足！需要 ' + c.price + ' 金币');
+          }
+        });
+      } else {
+        selectedChar = c.id;
+        saveSave();
+        renderCharSelect();
+      }
+    });
+    
+    container.appendChild(el);
+  });
+}
+
+renderCharSelect();
+
+// 初始化
+document.getElementById('ui-overlay').style.display = 'none';
+player.groundY = canvas.height - 80;
+
+// 开始游戏循环
+gameLoop();
+</script>
+</body>
+</html>

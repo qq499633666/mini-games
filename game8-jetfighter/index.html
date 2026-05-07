@@ -1,0 +1,192 @@
+<!DOCTYPE html>
+<html lang="zh">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=no">
+<title>飞机大战</title>
+<style>
+*{margin:0;padding:0;box-sizing:border-box}
+body{background:#000;display:flex;justify-content:center;align-items:center;height:100vh;overflow:hidden}
+canvas{background:linear-gradient(#000 0%,#0a0015 100%);border:2px solid #333;border-radius:4px}
+#hud{position:fixed;top:10px;left:50%;transform:translateX(-50%);display:flex;gap:30px;color:#0ff;font-size:16px;font-family:system-ui;pointer-events:none}
+#ad-overlay{position:fixed;inset:0;background:rgba(0,0,0,0.85);display:none;justify-content:center;align-items:center;flex-direction:column;z-index:10}
+#ad-panel{background:#1a1a2e;border:2px solid #e74c3c;border-radius:16px;padding:30px;text-align:center;color:white}
+#ad-title{font-size:22px;margin-bottom:8px;color:#e74c3c}
+.ad-btn{display:block;width:200px;padding:14px;background:#e74c3c;border:none;border-radius:25px;color:white;font-size:16px;cursor:pointer;margin:10px auto}
+#ad-countdown{font-size:28px;color:#0ff;margin:15px 0}
+</style>
+</head>
+<body>
+<div id="hud"><span>得分: <b id="score">0</b></span><span>命: <b id="lives">3</b></span><span>波次: <b id="wave">1</b></span></div>
+<canvas id="c" width="360" height="600"></canvas>
+<div id="ad-overlay">
+<div id="ad-panel">
+<div id="ad-title">✈️ 看广告加命</div>
+<div style="color:#aaa;margin-bottom:20px">看视频立即复活！</div>
+<div id="ad-countdown">3</div>
+<button class="ad-btn" onclick="skipAd()">观看广告 (+1命)</button>
+<button class="ad-btn" onclick="closeAd()" style="background:#555">结束</button>
+</div>
+</div>
+<script>
+const c=document.getElementById('c'),ctx=c.getContext('2d');
+const W=c.width,H=c.height;
+let player,bullets,enemies,particles,score,lives,wave,alive,invincible,interval,lastShot=0;
+
+function init(){
+player={x:W/2,y:H-80,w:30,h:30};
+bullets=[];enemies=[];particles=[];
+score=0;lives=3;wave=1;alive=true;invincible=false;
+updateHUD();
+}
+
+function updateHUD(){
+document.getElementById('score').textContent=score;
+document.getElementById('lives').textContent=lives;
+document.getElementById('wave').textContent=wave;
+}
+
+function spawnEnemy(){
+const x=30+Math.random()*(W-60),y=-30;
+const type=Math.random()<0.3?'big':'small';
+const hp=type==='big'?3:1;
+enemies.push({x,y,w:type==='big'?40:24,h:type==='big'?40:24,hp,type,shootTimer:Math.random()*60});
+}
+
+function spawnWave(){
+const count=3+wave;
+for(let i=0;i<count;i++)setTimeout(()=>spawnEnemy(),i*300);
+}
+
+function drawPlayer(){
+if(!alive)return;
+ctx.save();
+if(invincible&&Math.floor(Date.now()/100)%2===0){ctx.globalAlpha=0.4;}
+ctx.fillStyle='#0ff';
+ctx.beginPath();
+ctx.moveTo(player.x,player.y-player.h/2);
+ctx.lineTo(player.x-player.w/2,player.y+player.h/2);
+ctx.lineTo(player.x-player.w/4,player.y+player.h/4);
+ctx.lineTo(player.x+player.w/4,player.y+player.h/4);
+ctx.lineTo(player.x+player.w/2,player.y+player.h/2);
+ctx.closePath();
+ctx.fill();
+ctx.fillStyle='#f80';
+ctx.fillRect(player.x-3,player.y-player.h/2-8,6,12);
+ctx.restore();
+}
+
+function draw(){
+ctx.clearRect(0,0,W,H);
+ctx.fillStyle='#111';
+for(let i=0;i<50;i++){
+const sx=(i*73)%W,sy=(i*137)%H;
+ctx.fillRect(sx,sy,1,1);
+}
+enemies.forEach(e=>{
+ctx.fillStyle=e.type==='big'?'#f44':'#f80';
+ctx.fillRect(e.x-e.w/2,e.y-e.h/2,e.w,e.h);
+ctx.fillStyle='#a00';ctx.fillRect(e.x-e.w/2+4,e.y+e.h/2-6,e.w-8,6);
+if(e.hp>1){ctx.fillStyle='#0f0';ctx.fillRect(e.x-e.w/2+2,e.y-e.h/2-6,e.w-4,4);}
+});
+bullets.forEach(b=>{
+ctx.fillStyle=b.friend?'#ff0':'#f0f';
+ctx.fillRect(b.x-2,b.y-6,4,12);
+});
+particles.forEach(p=>{
+ctx.fillStyle=`rgba(${p.r},${p.g},${p.b},${p.a})`;
+ctx.fillRect(p.x,p.y,p.s,p.s);
+});
+drawPlayer();
+}
+
+function explode(x,y,color,n=8){
+for(let i=0;i<n;i++){
+const a=Math.random()*Math.PI*2;
+const sp=1+Math.random()*3;
+particles.push({x,y,vx:Math.cos(a)*sp,vy:Math.sin(a)*sp,r:parseInt(color.slice(1,3),16),g:parseInt(color.slice(3,5),16),b:parseInt(color.slice(5,7),16),a:1,s:2+Math.random()*3});
+}}
+
+function tick(){
+if(!alive)return;
+if(Math.random()<0.02*(1+wave*0.1))spawnEnemy();
+bullets=bullets.filter(b=>{
+b.y+=b.friend?-8:4;
+if(b.y<0||b.y>H)return false;
+return true;
+});
+enemies=enemies.filter(e=>{
+e.y+=e.type==='big'?1.5:2.5;
+if(e.y>H+e.h)return false;
+if(e.hp<=0)return false;
+return true;
+});
+enemies.forEach(e=>{
+e.shootTimer--;
+if(e.shootTimer<=0&&e.y>0){
+bullets.push({x:e.x,y:e.y+e.h/2,friend:false});
+e.shootTimer=60+Math.random()*90;
+}
+});
+// Bullet-enemy collision
+bullets.forEach(b=>{
+if(!b.friend)return;
+enemies.forEach(e=>{
+if(b.x>e.x-e.w/2&&b.x<e.x+e.w/2&&b.y>e.y-e.h/2&&b.y<e.y+e.h/2){
+e.hp--;b.y=-100;
+if(e.hp<=0){explode(e.x,e.y,'#ff8800',e.type==='big'?15:8);score+=e.type==='big'?20:10;}
+}});
+});
+// Enemy-player collision
+if(!invincible){
+enemies.forEach(e=>{
+if(Math.abs(player.x-e.x)<(player.w+e.w)/2&&Math.abs(player.y-e.y)<(player.h+e.h)/2){
+explode(player.x,player.y,'#00ffff',12);
+alive=false;lives--;
+updateHUD();
+setTimeout(showAd,400);
+}});
+}
+// Enemy bullet-player collision
+if(!invincible){
+bullets.forEach(b=>{
+if(b.friend)return;
+if(Math.abs(player.x-b.x)<player.w/2&&Math.abs(player.y-b.y)<player.h/2){
+b.y=-100;explode(player.x,player.y,'#00ffff',12);
+alive=false;lives--;
+updateHUD();
+setTimeout(showAd,400);
+}});
+}
+particles.forEach(p=>{p.x+=p.vx;p.y+=p.vy;p.a-=0.02;p.vy+=0.05;});
+particles=particles.filter(p=>p.a>0);
+if(enemies.length===0)spawnWave();
+updateHUD();draw();
+}
+
+function showAd(){
+if(lives<=0){return;}
+document.getElementById('ad-overlay').style.display='flex';
+let n=3,cd=document.getElementById('ad-countdown');cd.textContent=n;
+const iv=setInterval(()=>{n--;cd.textContent=n;if(n<=0)clearInterval(iv);},1000);
+}
+
+function skipAd(){
+document.getElementById('ad-overlay').style.display='none';
+lives++;document.getElementById('lives').textContent=lives;
+alive=true;invincible=true;
+setTimeout(()=>invincible=false,2000);
+}
+
+function closeAd(){document.getElementById('ad-overlay').style.display='none';}
+
+let mouseX=W/2;
+c.addEventListener('mousemove',e=>{const r=c.getBoundingClientRect();mouseX=e.clientX-r.left;player.x=Math.max(20,Math.min(W-20,mouseX));});
+c.addEventListener('touchmove',e=>{e.preventDefault();const r=c.getBoundingClientRect();player.x=Math.max(20,Math.min(W-20,e.touches[0].clientX-r.left));},{passive:false});
+c.addEventListener('click',()=>{if(alive&&Date.now()-lastShot>150){bullets.push({x:player.x,y:player.y-player.h/2,friend:true});lastShot=Date.now();}});
+c.addEventListener('touchstart',e=>{e.preventDefault();if(alive&&Date.now()-lastShot>150){bullets.push({x:player.x,y:player.y-player.h/2,friend:true});lastShot=Date.now();}player.x=W/2;},{passive:false});
+
+init();
+if(interval)clearInterval(interval);
+interval=setInterval(tick,16);
+</script></body></html>

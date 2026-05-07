@@ -1,0 +1,52 @@
+<!DOCTYPE html>
+<html lang="zh">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>跳跳侠 - 微信抖音小游戏</title>
+<style>
+*{margin:0;padding:0;box-sizing:border-box}
+body{background:#0a0a1a;color:white;font-family:system-ui;min-height:100vh;display:flex;flex-direction:column;align-items:center;padding:40px 20px}
+h1{color:#7cfc00;font-size:28px;margin-bottom:8px;text-align:center}
+.sub{color:#888;margin-bottom:30px;font-size:14px;text-align:center}
+.grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(160px,1fr));gap:16px;width:100%;max-width:800px}
+.card{background:#1a1a2e;border:1px solid #333;border-radius:12px;padding:20px;text-align:center;text-decoration:none;color:white;transition:transform .15s,border-color .15s}
+.card:hover{transform:translateY(-3px);border-color:#7cfc00}
+.card .emoji{font-size:40px;margin-bottom:8px;display:block}
+.card .name{font-size:16px;font-weight:bold;display:block;margin-bottom:4px}
+.card .desc{font-size:12px;color:#888;display:block}
+.tags{display:flex;gap:8px;justify-content:center;margin-top:10px}
+.tag{background:#7cfc00;color:#000;font-size:11px;padding:2px 8px;border-radius:10px}
+.badge{background:#ff6b35;color:white;font-size:11px;padding:2px 8px;border-radius:10px;margin-left:4px}
+</style>
+</head>
+<body>
+<h1>🎮 口袋小游戏</h1>
+<p class="sub">8款精品小游戏 · 免费无需下载 · 广告解锁续玩</p>
+<div class="grid">
+<a class="card" href="game1-jump-run/">
+<span class="emoji">🦘</span><span class="name">跳跳侠</span><span class="desc">跳跃跑酷</span><div class="tags"><span class="tag">看广告复活</span></div>
+</a>
+<a class="card" href="game2-marble-shooter/">
+<span class="emoji">🎯</span><span class="name">弹珠超人</span><span class="desc">射击对战</span><div class="tags"><span class="tag">看广告加命</span></div>
+</a>
+<a class="card" href="game3-2048/">
+<span class="emoji">🔢</span><span class="name">2048</span><span class="desc">益智消除</span><div class="tags"><span class="tag">看广告解锁</span></div>
+</a>
+<a class="card" href="game4-fruit-catcher/">
+<span class="emoji">🍓</span><span class="name">水果接接乐</span><span class="desc">敏捷反应</span><div class="tags"><span class="tag">看广告加时</span></div>
+</a>
+<a class="card" href="game5-bubble-shooter/">
+<span class="emoji">🫧</span><span class="name">泡泡龙</span><span class="desc">经典消除</span><div class="tags"><span class="tag">看广告续玩</span></div>
+</a>
+<a class="card" href="game6-snake/">
+<span class="emoji">🐍</span><span class="name">贪吃蛇</span><span class="desc">经典怀旧</span><div class="tags"><span class="tag">看广告复活</span></div>
+</a>
+<a class="card" href="game7-tetris/">
+<span class="emoji">🧱</span><span class="name">俄罗斯方块</span><span class="desc">益智消除</span><div class="tags"><span class="tag">看广告续玩</span></div>
+</a>
+<a class="card" href="game8-jetfighter/">
+<span class="emoji">✈️</span><span class="name">飞机大战</span><span class="desc">飞行射击</span><div class="tags"><span class="tag">看广告加命</span></div>
+</a>
+</div>
+</body></html>
